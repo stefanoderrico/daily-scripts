@@ -32,10 +32,10 @@ from curl_cffi import requests
 DOMAIN = "https://www.vinted.it"
 SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"  # tutta Italia
 CERCA_SU_SUBITO = True  # metti False per disattivare Subito
-# eBay: solo "Compralo Subito", usato + ricondizionato, ordinati per "appena messi in vendita"
+# eBay (API ufficiale): solo "Compralo Subito", usato + ricondizionato, "appena messi in vendita".
+# Richiede i secrets EBAY_CLIENT_ID e EBAY_CLIENT_SECRET; senza, eBay viene saltato.
 CERCA_SU_EBAY = True
-EBAY_URL = "https://www.ebay.it/sch/i.html"
-EBAY_CONDIZIONI = "3000|2500|2000|2010|2020|2030"  # usato + vari ricondizionati
+EBAY_CONDIZIONI = "2000|2010|2020|2030|2500|3000"  # ricondizionati (vari gradi) + usato
 
 # Esclusioni comuni a tutte le ricerche (regex sul titolo in minuscolo)
 ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
@@ -238,48 +238,71 @@ def _testo(frammento_html: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", frammento_html)).strip()
 
 
-def cerca_ebay(sessione, ric: dict) -> list:
-    """Legge la pagina dei risultati di eBay.it (gli annunci sono già nell'HTML)."""
-    params = {
-        "_nkw": ric["cerca_subito"], "_sop": 10, "LH_BIN": 1,
-        "_udlo": ric["min"], "_udhi": ric["max"], "LH_ItemCondition": EBAY_CONDIZIONI,
-    }
-    r = sessione.get(EBAY_URL, params=params, timeout=30)
-    r.raise_for_status()
-    items, visti = [], set()
-    for blocco in r.text.split('<li class="s-card')[1:]:
-        # nell'HTML di eBay gli attributi a volte non hanno le virgolette
-        m_id = re.search(r'href="?https://www\.ebay\.it/itm/(\d+)', blocco)
-        m_tit = re.search(r'class="?s-card__title"?[^>]*>\s*<span[^>]*>(.*?)</span>', blocco, re.S)
-        m_pr = re.search(r'class="?[^">]*s-card__price[^">]*"?[^>]*>(.*?)</span>', blocco, re.S)
-        if not (m_id and m_tit and m_pr) or m_id.group(1) in visti:
-            continue
-        visti.add(m_id.group(1))
-        prezzo_txt = _testo(m_pr.group(1))
-        m_num = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)", prezzo_txt)
-        valore = m_num.group(1).replace(".", "").replace(",", ".") if m_num else "0"
-        items.append({
-            "id": "e" + m_id.group(1),
-            "title": _testo(m_tit.group(1)),
-            "price": valore,
-            "url": f"https://www.ebay.it/itm/{m_id.group(1)}",
-        })
-    if not items and "s-card" not in r.text:
-        raise RuntimeError("pagina di eBay senza risultati (struttura cambiata o richiesta bloccata)")
-    return items
+class EbayAPI:
+    """Accesso all'API ufficiale di eBay (Browse API) con le credenziali dell'app."""
+    BASE = "https://api.ebay.com"
+
+    def __init__(self, sessione) -> None:
+        self.s = sessione
+        self.token = None
+
+    @staticmethod
+    def configurata() -> bool:
+        return bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
+
+    def _token(self) -> str:
+        if self.token:
+            return self.token
+        import base64
+        cred = base64.b64encode(
+            f"{os.getenv('EBAY_CLIENT_ID')}:{os.getenv('EBAY_CLIENT_SECRET')}".encode()).decode()
+        r = self.s.post(self.BASE + "/identity/v1/oauth2/token", timeout=30,
+                        headers={"Authorization": f"Basic {cred}",
+                                 "Content-Type": "application/x-www-form-urlencoded"},
+                        data="grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope")
+        r.raise_for_status()
+        self.token = r.json()["access_token"]
+        return self.token
+
+    def _get(self, path: str, params=None) -> dict:
+        r = self.s.get(self.BASE + path, params=params, timeout=30,
+                       headers={"Authorization": f"Bearer {self._token()}",
+                                "X-EBAY-C-MARKETPLACE-ID": "EBAY_IT",
+                                "Accept-Language": "it-IT"})
+        r.raise_for_status()
+        return r.json()
+
+    def cerca(self, ric: dict) -> list:
+        filtro = (f"price:[{ric['min']}..{ric['max']}],priceCurrency:EUR,"
+                  f"buyingOptions:{{FIXED_PRICE}},conditionIds:{{{EBAY_CONDIZIONI}}}")
+        dati = self._get("/buy/browse/v1/item_summary/search",
+                         {"q": ric["cerca_subito"], "sort": "newlyListed", "limit": 100, "filter": filtro})
+        items = []
+        for it in dati.get("itemSummaries", []):
+            if "FIXED_PRICE" not in (it.get("buyingOptions") or ["FIXED_PRICE"]):
+                continue
+            num = it.get("legacyItemId") or it["itemId"].split("|")[1]
+            luogo = it.get("itemLocation") or {}
+            items.append({
+                "id": "e" + str(num),
+                "api_id": it["itemId"],
+                "title": it.get("title", ""),
+                "price": str((it.get("price") or {}).get("value", "0")),
+                "url": f"https://www.ebay.it/itm/{num}",
+                "dove": luogo.get("city") or luogo.get("country", ""),
+            })
+        return items
+
+    def descrizione(self, item: dict) -> str:
+        dati = self._get("/buy/browse/v1/item/" + requests_quote(item["api_id"]))
+        testo = (dati.get("shortDescription") or "") + " " + (dati.get("description") or "")
+        testo = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", testo, flags=re.S | re.I)
+        return re.sub(r"\s+", " ", _testo(testo))
 
 
-def descrizione_ebay(sessione, url: str) -> str:
-    """La descrizione di eBay sta in un riquadro separato: lo scarica e ne estrae il testo."""
-    r = sessione.get(url, timeout=30)
-    r.raise_for_status()
-    m = re.search(r'<iframe[^>]+src="?(https://[^"\s>]*ebaydesc\.com[^"\s>]*)', r.text)
-    if not m:
-        return ""
-    d = sessione.get(html.unescape(m.group(1)), timeout=30)
-    d.raise_for_status()
-    corpo = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", d.text, flags=re.S | re.I)
-    return re.sub(r"\s+", " ", _testo(corpo))
+def requests_quote(s: str) -> str:
+    from urllib.parse import quote
+    return quote(s, safe="")
 
 
 def prezzo(item: dict) -> float:
@@ -416,6 +439,7 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
     visti = set(seen)
     riepilogo = []
     errori_vinted = 0
+    ebay = EbayAPI(v.s)
 
     for ric in RICERCHE:
         # Vinted
@@ -440,12 +464,13 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
             except Exception as e:
                 log(f"Errore Subito ({ric['nome']}): {e}")
                 riepilogo.append(f"{ric['nome']} – Subito: errore ({e})")
-        # eBay: se fallisce lo segnala, ma non fa fallire l'esecuzione
-        if CERCA_SU_EBAY:
+        # eBay (API ufficiale): se fallisce lo segnala, ma non fa fallire l'esecuzione
+        if CERCA_SU_EBAY and EbayAPI.configurata():
             try:
-                items_e = cerca_ebay(v.s, ric)
+                items_e = ebay.cerca(ric)
+                per_url = {it["url"]: it for it in items_e}
                 n = esamina(ric, "eBay", items_e, seen, visti, test,
-                            lambda url: descrizione_ebay(v.s, url))
+                            lambda url: ebay.descrizione(per_url[url]))
                 riepilogo.append(f"{ric['nome']} – eBay: {len(items_e)} letti, {n} nuovi")
             except Exception as e:
                 log(f"Errore eBay ({ric['nome']}): {e}")
