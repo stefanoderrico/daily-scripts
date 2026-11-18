@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Monitor MacBook Pro 16" tra 250 e 1600 € su Vinted e Subito.
+Monitor annunci su Vinted e Subito (MacBook Pro 16", iPad Pro 11" M4/M5).
 
 Uso:
     python3 vinted_monitor.py            # un solo controllo (per launchd/cron)
-    python3 vinted_monitor.py --loop     # gira in continuo, ogni 15-20 min
+    python3 vinted_monitor.py --loop     # gira in continuo, ogni 10-12 min
     python3 vinted_monitor.py --test     # stampa cosa passa e cosa viene escluso, senza notifiche
 
 Dipendenze:
@@ -30,28 +30,53 @@ from curl_cffi import requests
 # ───────────────────────── CONFIGURAZIONE ─────────────────────────
 
 DOMAIN = "https://www.vinted.it"
-RICERCA = 'macbook pro 16"'
-PREZZO_MIN = 250
-PREZZO_MAX = 1600
+SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"  # tutta Italia
+CERCA_SU_SUBITO = True  # metti False per disattivare Subito
 
-# Subito.it (tutta Italia, categoria Informatica). Metti False per disattivarlo.
-CERCA_SU_SUBITO = True
-RICERCA_SUBITO = "macbook pro 16"
-SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"
+# Esclusioni comuni a tutte le ricerche (regex sul titolo in minuscolo)
+ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
 
-# Esclusioni: solo cose che indicano chiaramente un modello che non interessa.
-# Sono regex, confrontate col titolo in minuscolo.
-ESCLUDI = [
-    r"\b201[5-9]\b", r"\b2020\b",          # anni pre-2021
-    r"\bintel\b", r"\bi[579]\b",           # processori Intel
-    r"\bair\b",                            # MacBook Air
-    r"touch\s*bar",                        # solo Intel
-    r"\b1[345]\s*(\"|”|″|''|pollici|inch)",  # 13", 14", 15"
-    r"\bcerco\b", r"\bcompro\b",           # annunci di ricerca
+# Le ricerche. Per ognuna:
+#   cerca     -> testo cercato su Vinted e Subito
+#   min/max   -> prezzo in euro
+#   richiedi  -> il titolo deve contenere TUTTE queste regex
+#   almeno_una-> il titolo deve contenere ALMENO UNA di queste (lista vuota = nessun vincolo)
+#   escludi   -> se il titolo contiene una di queste, l'annuncio è scartato
+RICERCHE = [
+    {
+        "nome": "MacBook Pro 16",
+        "cerca": 'macbook pro 16"',
+        "cerca_subito": "macbook pro 16",
+        "min": 250, "max": 1600,
+        "richiedi": [r"mac\s*bo+c?k"],          # accetta anche "mac book", "macboock"
+        "almeno_una": [],
+        "escludi": [
+            r"\b201[5-9]\b", r"\b2020\b",            # anni pre-2021
+            r"\bintel\b", r"\bi[579]\b",             # processori Intel
+            r"\bair\b",                              # MacBook Air
+            r"touch\s*bar",                          # solo Intel
+            r"\b1[345]\s*(\"|”|″|''|pollici|inch)",  # 13", 14", 15"
+        ],
+    },
+    {
+        "nome": "iPad Pro 11 M4/M5",
+        "cerca": "ipad pro",
+        "cerca_subito": "ipad pro",
+        "min": 150, "max": 500,
+        "richiedi": [r"i\s*pad", r"\bpro\b"],
+        "almeno_una": [r"\bm\s*[45]\b", r"\b202[45]\b"],   # chip M4/M5 o anno 2024/2025
+        "cerca_in_descrizione": True,   # se il titolo non lo dice, guarda nella descrizione...
+        "in_descrizione": [r"\bm\s*[45]\b"],   # ...cercando solo "M4" o "M5" (l'anno lì è poco affidabile)
+        "escludi": [
+            r"\bair\b", r"\bmini\b",
+            r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|inch)", r"12[.,]9",  # 12.9" e 13"
+            r"\bcustodia\b", r"\bcover\b", r"\bpellicola\b", r"vetro temperato",
+        ],
+    },
 ]
 
-INTERVALLO_MIN = 15 * 60   # per --loop
-INTERVALLO_MAX = 20 * 60
+INTERVALLO_MIN = 10 * 60   # per --loop
+INTERVALLO_MAX = 12 * 60
 
 BASE_DIR = Path(__file__).resolve().parent
 SEEN_FILE = BASE_DIR / "vinted_seen.json"
@@ -59,7 +84,6 @@ LOG_FILE = BASE_DIR / "vinted_monitor.log"
 
 # ──────────────────────────────────────────────────────────────────
 
-ESCLUDI_RE = [re.compile(p, re.I) for p in ESCLUDI]
 
 
 def log(msg: str) -> None:
@@ -77,7 +101,9 @@ def load_seen() -> list:
 
 
 def save_seen(seen: list) -> None:
-    SEEN_FILE.write_text(json.dumps(seen[-5000:]))  # tieni solo gli ultimi 5000
+    marker = [x for x in seen if str(x).startswith("#")]
+    ids = [x for x in seen if not str(x).startswith("#")]
+    SEEN_FILE.write_text(json.dumps(marker + ids[-5000:]))  # tieni solo gli ultimi 5000 annunci
 
 
 class Vinted:
@@ -88,13 +114,13 @@ class Vinted:
         self.s = requests.Session(impersonate="chrome")
         self.s.headers.update({"Accept-Language": "it-IT,it;q=0.9"})
 
-    def search(self) -> list:
+    def search(self, ric: dict) -> list:
         """Legge la pagina dei risultati di ricerca (gli annunci sono già nell'HTML)."""
         params = {
-            "search_text": RICERCA,
+            "search_text": ric["cerca"],
             "order": "newest_first",
-            "price_from": PREZZO_MIN,
-            "price_to": PREZZO_MAX,
+            "price_from": ric["min"],
+            "price_to": ric["max"],
         }
         for _ in range(2):
             r = self.s.get(DOMAIN + "/catalog", params=params, timeout=30)
@@ -106,6 +132,20 @@ class Vinted:
             r.raise_for_status()
             return parse_catalogo(r.text)
         return []
+
+
+    def descrizione(self, url: str) -> str:
+        """Scarica la pagina dell'annuncio e ne estrae la descrizione."""
+        r = self.s.get(url, timeout=30)
+        r.raise_for_status()
+        m = re.search(r'"description":"((?:[^"\\]|\\.)*)"', r.text)
+        if m:
+            try:
+                return json.loads('"' + m.group(1) + '"')
+            except ValueError:
+                return m.group(1)
+        m = re.search(r'<meta[^>]+property="og:description"[^>]+content="([^"]*)"', r.text)
+        return html.unescape(m.group(1)) if m else ""
 
 
 # Ogni annuncio nella pagina ha un link così:
@@ -134,29 +174,66 @@ def parse_catalogo(page: str) -> list:
     return items
 
 
+def cerca_subito(sessione, ric: dict) -> list:
+    """Legge la pagina di ricerca di Subito (i dati sono nel JSON __NEXT_DATA__)."""
+    params = {"q": ric["cerca_subito"], "ps": ric["min"], "pe": ric["max"], "order": "datedesc"}
+    r = sessione.get(SUBITO_URL, params=params, timeout=30)
+    r.raise_for_status()
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+    if not m:
+        raise RuntimeError("pagina di Subito senza dati (struttura cambiata o richiesta bloccata)")
+    lista = json.loads(m.group(1))["props"]["pageProps"]["initialState"]["items"]["originalList"]
+    items = []
+    for x in lista:
+        it = x.get("item", x)
+        url = (it.get("urls") or {}).get("default", "")
+        iid = re.search(r"(\d+)\.htm", url) or re.search(r"(\d+)$", it.get("urn", ""))
+        if not iid:
+            continue
+        prezzo_val = ((it.get("features") or {}).get("/price") or {}).get("values") or [{}]
+        geo = it.get("geo") or {}
+        citta = ((geo.get("town") or geo.get("city") or {}).get("value", ""))
+        items.append({
+            "id": "s" + iid.group(1),
+            "title": it.get("subject", ""),
+            "price": str(prezzo_val[0].get("key", "0")).replace(",", "."),
+            "url": url,
+            "dove": citta,
+            "descrizione": it.get("body", ""),
+        })
+    return items
+
+
 def prezzo(item: dict) -> float:
-    p = item.get("price")
-    if isinstance(p, dict):
-        p = p.get("amount")
     try:
-        return float(p)
+        return float(item.get("price"))
     except (TypeError, ValueError):
         return 0.0
 
 
-def motivo_esclusione(item: dict):
+def motivo_esclusione(item: dict, ric: dict):
     """Ritorna il motivo per cui l'annuncio è scartato, oppure None se passa."""
     titolo = (item.get("title") or "").lower()
-    if not re.search(r"mac\s*bo+c?k", titolo):  # accetta anche "mac book", "macboock"
-        return "non è un macbook"
-    for rx in ESCLUDI_RE:
-        m = rx.search(titolo)
+    for rx in ric["richiedi"]:
+        if not re.search(rx, titolo, re.I):
+            return f"manca '{rx}'"
+    for rx in ric["escludi"] + ESCLUDI_SEMPRE:
+        m = re.search(rx, titolo, re.I)
         if m:
             return f"contiene '{m.group(0)}'"
     p = prezzo(item)
-    if not (PREZZO_MIN <= p <= PREZZO_MAX):
+    if not (ric["min"] <= p <= ric["max"]):
         return f"prezzo {p:.0f} € fuori range"
+    if ric["almeno_una"] and not any(re.search(rx, titolo, re.I) for rx in ric["almeno_una"]):
+        return MODELLO_NON_INDICATO
     return None
+
+
+MODELLO_NON_INDICATO = "modello non indicato nel titolo"
+
+
+def modello_in_descrizione(testo: str, ric: dict) -> bool:
+    return any(re.search(rx, testo or "", re.I) for rx in ric.get("in_descrizione", ric["almeno_una"]))
 
 
 def notifica(titolo: str, testo: str, url: str) -> None:
@@ -180,44 +257,32 @@ def notifica(titolo: str, testo: str, url: str) -> None:
             log(f"Errore Telegram: {e}")
 
 
-def cerca_subito(sessione) -> list:
-    """Legge la pagina di ricerca di Subito (i dati sono nel JSON __NEXT_DATA__)."""
-    params = {"q": RICERCA_SUBITO, "ps": PREZZO_MIN, "pe": PREZZO_MAX, "order": "datedesc"}
-    r = sessione.get(SUBITO_URL, params=params, timeout=30)
-    r.raise_for_status()
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
-    if not m:
-        raise RuntimeError("pagina di Subito senza dati (struttura cambiata o richiesta bloccata)")
-    lista = json.loads(m.group(1))["props"]["pageProps"]["initialState"]["items"]["originalList"]
-    items = []
-    for x in lista:
-        it = x.get("item", x)
-        url = (it.get("urls") or {}).get("default", "")
-        iid = re.search(r"(\d+)\.htm", url) or re.search(r"(\d+)$", it.get("urn", ""))
-        if not iid:
-            continue
-        prezzo_val = ((it.get("features") or {}).get("/price") or {}).get("values") or [{}]
-        citta = (((it.get("geo") or {}).get("town") or (it.get("geo") or {}).get("city") or {}).get("value", ""))
-        items.append({
-            "id": "s" + iid.group(1),
-            "title": it.get("subject", ""),
-            "price": str(prezzo_val[0].get("key", "0")).replace(",", "."),
-            "url": url,
-            "dove": citta,
-        })
-    return items
-
-
-def esamina(fonte: str, items: list, seen: list, visti: set, test: bool, silenzioso: bool) -> int:
+def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bool,
+            leggi_descrizione=lambda url: "") -> int:
     """Notifica gli annunci nuovi che passano i filtri. Ritorna quanti ne ha segnalati."""
+    # La prima volta che una ricerca gira su una fonte, gli annunci già online
+    # vengono solo memorizzati, così non arrivano decine di notifiche insieme.
+    marker = f"#init:{ric['nome']}:{fonte}"
+    silenzioso = marker not in visti
+    if silenzioso and ric is RICERCHE[0]:
+        # compatibilità: la ricerca MacBook era già attiva prima di questa versione
+        prefisso_subito = fonte == "Subito"
+        if any(isinstance(x, int) != prefisso_subito and not str(x).startswith("#") for x in seen):
+            silenzioso = False
+    if silenzioso and not test:
+        log(f"Primo avvio di '{ric['nome']}' su {fonte}: memorizzo gli annunci attuali senza notificarli.")
+    if not test and marker not in visti:
+        seen.append(marker)
+        visti.add(marker)
+
     nuovi = 0
     for it in items:
         iid, url, p = it["id"], it["url"], prezzo(it)
-        motivo = motivo_esclusione(it)
+        motivo = motivo_esclusione(it, ric)
 
         if test:
             stato = "OK   " if motivo is None else f"NO   ({motivo})"
-            print(f"[{fonte:6}] {p:>6.0f} €  {stato:35}  {it.get('title')}  {url}")
+            print(f"[{ric['nome'][:12]:12}|{fonte:6}] {p:>6.0f} €  {stato:35}  {it.get('title')}  {url}")
             continue
 
         if iid in visti:
@@ -225,52 +290,70 @@ def esamina(fonte: str, items: list, seen: list, visti: set, test: bool, silenzi
         seen.append(iid)
         visti.add(iid)
 
+        # Modello non nel titolo: guarda nella descrizione (solo per gli annunci nuovi)
+        if motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione") and not silenzioso:
+            try:
+                desc = it["descrizione"] if "descrizione" in it else leggi_descrizione(it["url"])
+                if modello_in_descrizione(desc, ric):
+                    motivo = None
+                time.sleep(random.uniform(1, 3))
+            except Exception as e:
+                log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
+
         if motivo is None and not silenzioso:
             nuovi += 1
             dove = f", {it['dove']}" if it.get("dove") else ""
-            log(f"NUOVO ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
-            notifica(f"MacBook Pro 16 a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url)
+            log(f"NUOVO {ric['nome']} ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
+            notifica(f"{ric['nome']} a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url)
     return nuovi
 
 
-def controllo(v: Vinted, seen: list, test: bool, primo_avvio: bool) -> None:
+def controllo(v: Vinted, seen: list, test: bool) -> None:
     visti = set(seen)
     riepilogo = []
+    errori_vinted = 0
 
-    # Vinted: se fallisce, l'esecuzione risulta fallita (e GitHub ti avvisa via email)
-    items = v.search()
-    if not items:
-        raise RuntimeError("Nessun annuncio ricevuto da Vinted: possibile blocco.")
-    n = esamina("Vinted", items, seen, visti, test, silenzioso=primo_avvio)
-    riepilogo.append(f"Vinted: {len(items)} letti, {n} nuovi")
-
-    # Subito: se fallisce, lo segnala nel log ma non blocca Vinted
-    if CERCA_SU_SUBITO:
+    for ric in RICERCHE:
+        # Vinted
         try:
-            items_s = cerca_subito(v.s)
-            primo_subito = not any(str(x).startswith("s") for x in seen)
-            if primo_subito and not test:
-                log("Primo avvio su Subito: memorizzo gli annunci attuali senza notificarli.")
-            n = esamina("Subito", items_s, seen, visti, test, silenzioso=primo_subito)
-            riepilogo.append(f"Subito: {len(items_s)} letti, {n} nuovi")
+            items = v.search(ric)
+            if not items:
+                raise RuntimeError("nessun annuncio ricevuto (possibile blocco)")
+            n = esamina(ric, "Vinted", items, seen, visti, test, v.descrizione)
+            riepilogo.append(f"{ric['nome']} – Vinted: {len(items)} letti, {n} nuovi")
         except Exception as e:
-            log(f"Errore Subito: {e}")
-            riepilogo.append(f"Subito: errore ({e})")
+            errori_vinted += 1
+            log(f"Errore Vinted ({ric['nome']}): {e}")
+            riepilogo.append(f"{ric['nome']} – Vinted: errore ({e})")
+            v.new_session()
+
+        # Subito: se fallisce lo segnala, ma non fa fallire l'esecuzione
+        if CERCA_SU_SUBITO:
+            try:
+                items_s = cerca_subito(v.s, ric)
+                n = esamina(ric, "Subito", items_s, seen, visti, test)
+                riepilogo.append(f"{ric['nome']} – Subito: {len(items_s)} letti, {n} nuovi")
+            except Exception as e:
+                log(f"Errore Subito ({ric['nome']}): {e}")
+                riepilogo.append(f"{ric['nome']} – Subito: errore ({e})")
+        time.sleep(random.uniform(2, 5))  # piccola pausa tra una ricerca e l'altra
 
     if not test:
         save_seen(seen)
-        testo = " | ".join(riepilogo)
-        log(f"Controllo completato – {testo}")
+        testo = "\n".join(riepilogo)
+        log("Controllo completato:\n" + testo)
         # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram
         if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
-            notifica("✅ Monitor MacBook attivo", f"Controllo manuale completato.\n{testo}",
+            notifica("✅ Monitor attivo", f"Controllo manuale completato.\n{testo}",
                      "https://github.com/" + os.getenv("GITHUB_REPOSITORY", "") + "/actions")
+
+    if errori_vinted == len(RICERCHE):
+        raise RuntimeError("Vinted non risponde per nessuna ricerca.")
 
 
 def main() -> None:
     test = "--test" in sys.argv
     loop = "--loop" in sys.argv and not test
-    primo_avvio = not SEEN_FILE.exists()
     seen = load_seen()
     if not (os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")) and sys.platform != "darwin":
         log("Attenzione: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID non impostati, nessuna notifica verrà inviata.")
@@ -280,17 +363,11 @@ def main() -> None:
 
     while True:
         try:
-            # Al primo avvio gli annunci già online vengono solo memorizzati,
-            # così non arrivano decine di notifiche tutte insieme.
-            if primo_avvio and not test:
-                log("Primo avvio: memorizzo gli annunci attuali senza notificarli.")
-            controllo(v, seen, test, primo_avvio)
-            primo_avvio = False
+            controllo(v, seen, test)
             errore = False
         except Exception as e:
             errore = True
             log(f"Errore: {e}")
-            v.new_session()
         if not loop:
             break
         attesa = random.uniform(INTERVALLO_MIN, INTERVALLO_MAX)
