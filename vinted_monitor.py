@@ -14,6 +14,7 @@ Notifiche Telegram (facoltative): imposta le variabili d'ambiente
     TELEGRAM_BOT_TOKEN  e  TELEGRAM_CHAT_ID
 """
 
+import html
 import json
 import os
 import random
@@ -81,29 +82,51 @@ class Vinted:
     def new_session(self) -> None:
         self.s = requests.Session(impersonate="chrome")
         self.s.headers.update({"Accept-Language": "it-IT,it;q=0.9"})
-        # la homepage imposta i cookie di sessione necessari all'API
-        self.s.get(DOMAIN + "/", timeout=30).raise_for_status()
 
     def search(self) -> list:
+        """Legge la pagina dei risultati di ricerca (gli annunci sono già nell'HTML)."""
         params = {
             "search_text": RICERCA,
             "order": "newest_first",
             "price_from": PREZZO_MIN,
             "price_to": PREZZO_MAX,
-            "currency": "EUR",
-            "per_page": 96,
-            "page": 1,
         }
         for _ in range(2):
-            r = self.s.get(DOMAIN + "/api/v2/catalog/items", params=params, timeout=30)
-            if r.status_code in (401, 403):
-                log(f"Sessione scaduta/bloccata ({r.status_code}), ne apro una nuova…")
-                time.sleep(5)
+            r = self.s.get(DOMAIN + "/catalog", params=params, timeout=30)
+            if r.status_code in (401, 403, 429):
+                log(f"Richiesta rifiutata ({r.status_code}), riprovo con una nuova sessione…")
+                time.sleep(10)
                 self.new_session()
                 continue
             r.raise_for_status()
-            return r.json().get("items", [])
+            return parse_catalogo(r.text)
         return []
+
+
+# Ogni annuncio nella pagina ha un link così:
+# <a href="/items/123-titolo" ... title="Titolo, Brand: Apple, Modello: ..., Condizioni: Ottime, 900.00 €, 945.70 €">
+ITEM_RE = re.compile(r'<a href="(/items/(\d+)-[^"?]*)[^"]*"[^>]*?title="([^"]*)"')
+PREZZI_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*€")
+
+
+def parse_catalogo(page: str) -> list:
+    items, visti = [], set()
+    for path, iid, attr in ITEM_RE.findall(page):
+        if iid in visti:
+            continue
+        visti.add(iid)
+        attr = html.unescape(attr)
+        titolo = re.split(r", (?:Brand|Modello|Condizioni|Taglia):", attr)[0]
+        prezzi = PREZZI_RE.findall(attr)
+        # gli ultimi due importi sono: prezzo articolo, prezzo con protezione acquisti
+        prezzo_art = prezzi[-2] if len(prezzi) >= 2 else (prezzi[-1] if prezzi else "0")
+        items.append({
+            "id": int(iid),
+            "title": titolo.strip(),
+            "price": prezzo_art.replace(",", "."),
+            "url": DOMAIN + path,
+        })
+    return items
 
 
 def prezzo(item: dict) -> float:
@@ -119,7 +142,7 @@ def prezzo(item: dict) -> float:
 def motivo_esclusione(item: dict):
     """Ritorna il motivo per cui l'annuncio è scartato, oppure None se passa."""
     titolo = (item.get("title") or "").lower()
-    if "macbook" not in titolo:
+    if not re.search(r"mac\s*bo+c?k", titolo):  # accetta anche "mac book", "macboock"
         return "non è un macbook"
     for rx in ESCLUDI_RE:
         m = rx.search(titolo)
