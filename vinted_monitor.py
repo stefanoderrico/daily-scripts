@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Monitor annunci su Vinted e Subito (MacBook Pro 16", iPad Pro 11" M4/M5).
+Monitor annunci su Vinted, Subito ed eBay (MacBook Pro 16", iPad Pro 11" M4/M5).
 
 Uso:
     python3 vinted_monitor.py            # un solo controllo (per launchd/cron)
@@ -32,6 +32,10 @@ from curl_cffi import requests
 DOMAIN = "https://www.vinted.it"
 SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"  # tutta Italia
 CERCA_SU_SUBITO = True  # metti False per disattivare Subito
+# eBay: solo "Compralo Subito", usato + ricondizionato, ordinati per "appena messi in vendita"
+CERCA_SU_EBAY = True
+EBAY_URL = "https://www.ebay.it/sch/i.html"
+EBAY_CONDIZIONI = "3000|2500|2000|2010|2020|2030"  # usato + vari ricondizionati
 
 # Esclusioni comuni a tutte le ricerche (regex sul titolo in minuscolo)
 ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
@@ -230,6 +234,54 @@ def cerca_subito(sessione, ric: dict) -> list:
     return items
 
 
+def _testo(frammento_html: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", " ", frammento_html)).strip()
+
+
+def cerca_ebay(sessione, ric: dict) -> list:
+    """Legge la pagina dei risultati di eBay.it (gli annunci sono già nell'HTML)."""
+    params = {
+        "_nkw": ric["cerca_subito"], "_sop": 10, "LH_BIN": 1,
+        "_udlo": ric["min"], "_udhi": ric["max"], "LH_ItemCondition": EBAY_CONDIZIONI,
+    }
+    r = sessione.get(EBAY_URL, params=params, timeout=30)
+    r.raise_for_status()
+    items, visti = [], set()
+    for blocco in r.text.split('<li class="s-card')[1:]:
+        # nell'HTML di eBay gli attributi a volte non hanno le virgolette
+        m_id = re.search(r'href="?https://www\.ebay\.it/itm/(\d+)', blocco)
+        m_tit = re.search(r'class="?s-card__title"?[^>]*>\s*<span[^>]*>(.*?)</span>', blocco, re.S)
+        m_pr = re.search(r'class="?[^">]*s-card__price[^">]*"?[^>]*>(.*?)</span>', blocco, re.S)
+        if not (m_id and m_tit and m_pr) or m_id.group(1) in visti:
+            continue
+        visti.add(m_id.group(1))
+        prezzo_txt = _testo(m_pr.group(1))
+        m_num = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)", prezzo_txt)
+        valore = m_num.group(1).replace(".", "").replace(",", ".") if m_num else "0"
+        items.append({
+            "id": "e" + m_id.group(1),
+            "title": _testo(m_tit.group(1)),
+            "price": valore,
+            "url": f"https://www.ebay.it/itm/{m_id.group(1)}",
+        })
+    if not items and "s-card" not in r.text:
+        raise RuntimeError("pagina di eBay senza risultati (struttura cambiata o richiesta bloccata)")
+    return items
+
+
+def descrizione_ebay(sessione, url: str) -> str:
+    """La descrizione di eBay sta in un riquadro separato: lo scarica e ne estrae il testo."""
+    r = sessione.get(url, timeout=30)
+    r.raise_for_status()
+    m = re.search(r'<iframe[^>]+src="?(https://[^"\s>]*ebaydesc\.com[^"\s>]*)', r.text)
+    if not m:
+        return ""
+    d = sessione.get(html.unescape(m.group(1)), timeout=30)
+    d.raise_for_status()
+    corpo = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", d.text, flags=re.S | re.I)
+    return re.sub(r"\s+", " ", _testo(corpo))
+
+
 def prezzo(item: dict) -> float:
     try:
         return float(item.get("price"))
@@ -297,7 +349,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
     # vengono solo memorizzati, così non arrivano decine di notifiche insieme.
     marker = f"#init:{ric['nome']}:{fonte}"
     silenzioso = marker not in visti
-    if silenzioso and ric is RICERCHE[0]:
+    if silenzioso and ric is RICERCHE[0] and fonte in ("Vinted", "Subito"):
         # compatibilità: la ricerca MacBook era già attiva prima di questa versione
         prefisso_subito = fonte == "Subito"
         if any(isinstance(x, int) != prefisso_subito and not str(x).startswith("#") for x in seen):
@@ -388,6 +440,16 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
             except Exception as e:
                 log(f"Errore Subito ({ric['nome']}): {e}")
                 riepilogo.append(f"{ric['nome']} – Subito: errore ({e})")
+        # eBay: se fallisce lo segnala, ma non fa fallire l'esecuzione
+        if CERCA_SU_EBAY:
+            try:
+                items_e = cerca_ebay(v.s, ric)
+                n = esamina(ric, "eBay", items_e, seen, visti, test,
+                            lambda url: descrizione_ebay(v.s, url))
+                riepilogo.append(f"{ric['nome']} – eBay: {len(items_e)} letti, {n} nuovi")
+            except Exception as e:
+                log(f"Errore eBay ({ric['nome']}): {e}")
+                riepilogo.append(f"{ric['nome']} – eBay: errore ({e})")
         time.sleep(random.uniform(2, 5))  # piccola pausa tra una ricerca e l'altra
 
     if not test:
