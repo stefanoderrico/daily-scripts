@@ -208,6 +208,11 @@ def controllo(v: Vinted, seen: list, test: bool, silenzioso: bool = False) -> No
     if not test:
         save_seen(seen)
         log(f"Controllo completato: {len(items)} annunci letti, {nuovi} nuovi segnalati.")
+        # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram
+        if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
+            notifica("✅ Vinted monitor attivo",
+                     f"Controllo manuale completato: {len(items)} annunci letti, {nuovi} nuovi segnalati.",
+                     "https://github.com/" + os.getenv("GITHUB_REPOSITORY", "") + "/actions")
 
 
 def main() -> None:
