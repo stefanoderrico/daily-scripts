@@ -57,10 +57,19 @@ RICERCHE = [
             r"touch\s*bar",                          # solo Intel
             r"\b1[345]\s*(\"|”|″|''|pollici|inch)",  # 13", 14", 15"
         ],
-        # Scarta anche se la DESCRIZIONE cita un'altra misura...
-        "escludi_descrizione": [r"\b1[345]\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
-        # ...a meno che la descrizione non citi anche il 16"
-        "salva_se_descrizione": [r"\b16\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
+        # Regole sulla DESCRIZIONE: scarta se cita qualcosa in "escludi"
+        # e allo stesso tempo NON cita niente in "salva".
+        "regole_descrizione": [
+            {   # misura sbagliata (13", 14", 15"), a meno che citi anche il 16"
+                "escludi": [r"\b1[345]\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
+                "salva": [r"\b16\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
+            },
+            {   # modello Intel, a meno che citi anche un chip Apple (M1…M5, Pro/Max)
+                "escludi": [r"\bintel\b", r"\bcore\s*i[3579]\b", r"\bi[3579]\b", r"touch\s*bar",
+                            r"\bradeon\b", r"\b201[5-9]\b", r"\b2020\b"],
+                "salva": [r"\bm\s*[1-5]\b", r"apple\s*silicon"],
+            },
+        ],
     },
     {
         "nome": "iPad Pro 11 M4/M5",
@@ -78,8 +87,12 @@ RICERCHE = [
             # (così "iPad Pro M4 + custodia" passa, "Custodia per iPad Pro M4" no)
             r"^\W*(custodia|cover|pellicola|vetro|magic keyboard|tastiera|apple pencil|pencil|smart folio|folio)\b",
         ],
-        "escludi_descrizione": [r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|pollic|inch)", r"12[.,]9"],
-        "salva_se_descrizione": [r"\b11\s*(\"|”|″|''|pollici|pollic|inch)"],
+        "regole_descrizione": [
+            {   # 12.9"/13", a meno che citi anche l'11"
+                "escludi": [r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|pollic|inch)", r"12[.,]9"],
+                "salva": [r"\b11\s*(\"|”|″|''|pollici|pollic|inch)"],
+            },
+        ],
     },
 ]
 
@@ -301,7 +314,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
         # Controlli sulla descrizione (solo per gli annunci nuovi, per non appesantire)
         if not silenzioso and (
             (motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
-            or (motivo is None and ric.get("escludi_descrizione"))
+            or (motivo is None and ric.get("regole_descrizione"))
         ):
             try:
                 if "descrizione" not in it:
@@ -311,14 +324,15 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
                 # modello non nel titolo: lo cerca nella descrizione
                 if motivo == MODELLO_NON_INDICATO and modello_in_descrizione(desc, ric):
                     motivo = None
-                # misura sbagliata citata nella descrizione
-                if motivo is None:
-                    m = next((re.search(rx, desc, re.I) for rx in ric.get("escludi_descrizione", [])
+                # regole sulla descrizione (misura o modello sbagliati)
+                for regola in ric.get("regole_descrizione", []) if motivo is None else []:
+                    m = next((re.search(rx, desc, re.I) for rx in regola["escludi"]
                               if re.search(rx, desc, re.I)), None)
-                    salva = any(re.search(rx, desc, re.I) for rx in ric.get("salva_se_descrizione", []))
+                    salva = any(re.search(rx, desc, re.I) for rx in regola.get("salva", []))
                     if m and not salva:
                         motivo = f"descrizione cita '{m.group(0)}'"
                         log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {url}")
+                        break
             except Exception as e:
                 log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
 
