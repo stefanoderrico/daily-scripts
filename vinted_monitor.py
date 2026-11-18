@@ -57,6 +57,10 @@ RICERCHE = [
             r"touch\s*bar",                          # solo Intel
             r"\b1[345]\s*(\"|”|″|''|pollici|inch)",  # 13", 14", 15"
         ],
+        # Scarta anche se la DESCRIZIONE cita un'altra misura...
+        "escludi_descrizione": [r"\b1[345]\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
+        # ...a meno che la descrizione non citi anche il 16"
+        "salva_se_descrizione": [r"\b16\s*(\"|”|″|''|pollici|pollic|inch|po\b)"],
     },
     {
         "nome": "iPad Pro 11 M4/M5",
@@ -72,6 +76,8 @@ RICERCHE = [
             r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|inch)", r"12[.,]9",  # 12.9" e 13"
             r"\bcustodia\b", r"\bcover\b", r"\bpellicola\b", r"vetro temperato",
         ],
+        "escludi_descrizione": [r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|pollic|inch)", r"12[.,]9"],
+        "salva_se_descrizione": [r"\b11\s*(\"|”|″|''|pollici|pollic|inch)"],
     },
 ]
 
@@ -290,13 +296,27 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
         seen.append(iid)
         visti.add(iid)
 
-        # Modello non nel titolo: guarda nella descrizione (solo per gli annunci nuovi)
-        if motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione") and not silenzioso:
+        # Controlli sulla descrizione (solo per gli annunci nuovi, per non appesantire)
+        if not silenzioso and (
+            (motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
+            or (motivo is None and ric.get("escludi_descrizione"))
+        ):
             try:
-                desc = it["descrizione"] if "descrizione" in it else leggi_descrizione(it["url"])
-                if modello_in_descrizione(desc, ric):
+                if "descrizione" not in it:
+                    it["descrizione"] = leggi_descrizione(it["url"])
+                    time.sleep(random.uniform(1, 3))
+                desc = it["descrizione"] or ""
+                # modello non nel titolo: lo cerca nella descrizione
+                if motivo == MODELLO_NON_INDICATO and modello_in_descrizione(desc, ric):
                     motivo = None
-                time.sleep(random.uniform(1, 3))
+                # misura sbagliata citata nella descrizione
+                if motivo is None:
+                    m = next((re.search(rx, desc, re.I) for rx in ric.get("escludi_descrizione", [])
+                              if re.search(rx, desc, re.I)), None)
+                    salva = any(re.search(rx, desc, re.I) for rx in ric.get("salva_se_descrizione", []))
+                    if m and not salva:
+                        motivo = f"descrizione cita '{m.group(0)}'"
+                        log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {url}")
             except Exception as e:
                 log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
 
