@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vinted monitor – MacBook Pro 16" tra 250 e 1600 €.
+Monitor MacBook Pro 16" tra 250 e 1600 € su Vinted e Subito.
 
 Uso:
     python3 vinted_monitor.py            # un solo controllo (per launchd/cron)
@@ -34,6 +34,11 @@ RICERCA = 'macbook pro 16"'
 PREZZO_MIN = 250
 PREZZO_MAX = 1600
 
+# Subito.it (tutta Italia, categoria Informatica). Metti False per disattivarlo.
+CERCA_SU_SUBITO = True
+RICERCA_SUBITO = "macbook pro 16"
+SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"
+
 # Esclusioni: solo cose che indicano chiaramente un modello che non interessa.
 # Sono regex, confrontate col titolo in minuscolo.
 ESCLUDI = [
@@ -41,7 +46,7 @@ ESCLUDI = [
     r"\bintel\b", r"\bi[579]\b",           # processori Intel
     r"\bair\b",                            # MacBook Air
     r"touch\s*bar",                        # solo Intel
-    r"\b1[345]\s*(\"|”|''|pollici|inch)",  # 13", 14", 15"
+    r"\b1[345]\s*(\"|”|″|''|pollici|inch)",  # 13", 14", 15"
     r"\bcerco\b", r"\bcompro\b",           # annunci di ricerca
 ]
 
@@ -175,24 +180,44 @@ def notifica(titolo: str, testo: str, url: str) -> None:
             log(f"Errore Telegram: {e}")
 
 
-def controllo(v: Vinted, seen: list, test: bool, silenzioso: bool = False) -> None:
-    items = v.search()
-    if not items:
-        raise RuntimeError("Nessun annuncio ricevuto: possibile blocco da parte di Vinted.")
-    visti = set(seen)
-    nuovi = 0
+def cerca_subito(sessione) -> list:
+    """Legge la pagina di ricerca di Subito (i dati sono nel JSON __NEXT_DATA__)."""
+    params = {"q": RICERCA_SUBITO, "ps": PREZZO_MIN, "pe": PREZZO_MAX, "order": "datedesc"}
+    r = sessione.get(SUBITO_URL, params=params, timeout=30)
+    r.raise_for_status()
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+    if not m:
+        raise RuntimeError("pagina di Subito senza dati (struttura cambiata o richiesta bloccata)")
+    lista = json.loads(m.group(1))["props"]["pageProps"]["initialState"]["items"]["originalList"]
+    items = []
+    for x in lista:
+        it = x.get("item", x)
+        url = (it.get("urls") or {}).get("default", "")
+        iid = re.search(r"(\d+)\.htm", url) or re.search(r"(\d+)$", it.get("urn", ""))
+        if not iid:
+            continue
+        prezzo_val = ((it.get("features") or {}).get("/price") or {}).get("values") or [{}]
+        citta = (((it.get("geo") or {}).get("town") or (it.get("geo") or {}).get("city") or {}).get("value", ""))
+        items.append({
+            "id": "s" + iid.group(1),
+            "title": it.get("subject", ""),
+            "price": str(prezzo_val[0].get("key", "0")).replace(",", "."),
+            "url": url,
+            "dove": citta,
+        })
+    return items
 
+
+def esamina(fonte: str, items: list, seen: list, visti: set, test: bool, silenzioso: bool) -> int:
+    """Notifica gli annunci nuovi che passano i filtri. Ritorna quanti ne ha segnalati."""
+    nuovi = 0
     for it in items:
-        iid = it["id"]
-        url = it.get("url") or f"{DOMAIN}/items/{iid}"
-        if url.startswith("/"):
-            url = DOMAIN + url
-        p = prezzo(it)
+        iid, url, p = it["id"], it["url"], prezzo(it)
         motivo = motivo_esclusione(it)
 
         if test:
             stato = "OK   " if motivo is None else f"NO   ({motivo})"
-            print(f"{p:>6.0f} €  {stato:35}  {it.get('title')}  {url}")
+            print(f"[{fonte:6}] {p:>6.0f} €  {stato:35}  {it.get('title')}  {url}")
             continue
 
         if iid in visti:
@@ -202,16 +227,43 @@ def controllo(v: Vinted, seen: list, test: bool, silenzioso: bool = False) -> No
 
         if motivo is None and not silenzioso:
             nuovi += 1
-            log(f"NUOVO: {p:.0f} € – {it.get('title')} – {url}")
-            notifica(f"MacBook Pro 16 a {p:.0f} €", it.get("title", ""), url)
+            dove = f", {it['dove']}" if it.get("dove") else ""
+            log(f"NUOVO ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
+            notifica(f"MacBook Pro 16 a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url)
+    return nuovi
+
+
+def controllo(v: Vinted, seen: list, test: bool, primo_avvio: bool) -> None:
+    visti = set(seen)
+    riepilogo = []
+
+    # Vinted: se fallisce, l'esecuzione risulta fallita (e GitHub ti avvisa via email)
+    items = v.search()
+    if not items:
+        raise RuntimeError("Nessun annuncio ricevuto da Vinted: possibile blocco.")
+    n = esamina("Vinted", items, seen, visti, test, silenzioso=primo_avvio)
+    riepilogo.append(f"Vinted: {len(items)} letti, {n} nuovi")
+
+    # Subito: se fallisce, lo segnala nel log ma non blocca Vinted
+    if CERCA_SU_SUBITO:
+        try:
+            items_s = cerca_subito(v.s)
+            primo_subito = not any(str(x).startswith("s") for x in seen)
+            if primo_subito and not test:
+                log("Primo avvio su Subito: memorizzo gli annunci attuali senza notificarli.")
+            n = esamina("Subito", items_s, seen, visti, test, silenzioso=primo_subito)
+            riepilogo.append(f"Subito: {len(items_s)} letti, {n} nuovi")
+        except Exception as e:
+            log(f"Errore Subito: {e}")
+            riepilogo.append(f"Subito: errore ({e})")
 
     if not test:
         save_seen(seen)
-        log(f"Controllo completato: {len(items)} annunci letti, {nuovi} nuovi segnalati.")
+        testo = " | ".join(riepilogo)
+        log(f"Controllo completato – {testo}")
         # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram
         if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
-            notifica("✅ Vinted monitor attivo",
-                     f"Controllo manuale completato: {len(items)} annunci letti, {nuovi} nuovi segnalati.",
+            notifica("✅ Monitor MacBook attivo", f"Controllo manuale completato.\n{testo}",
                      "https://github.com/" + os.getenv("GITHUB_REPOSITORY", "") + "/actions")
 
 
@@ -224,11 +276,7 @@ def main() -> None:
         log("Attenzione: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID non impostati, nessuna notifica verrà inviata.")
 
     errore = False
-    try:
-        v = Vinted()
-    except Exception as e:
-        log(f"Impossibile aprire una sessione su Vinted: {e}")
-        sys.exit(1)
+    v = Vinted()
 
     while True:
         try:
@@ -236,16 +284,13 @@ def main() -> None:
             # così non arrivano decine di notifiche tutte insieme.
             if primo_avvio and not test:
                 log("Primo avvio: memorizzo gli annunci attuali senza notificarli.")
-            controllo(v, seen, test, silenzioso=primo_avvio)
+            controllo(v, seen, test, primo_avvio)
             primo_avvio = False
             errore = False
         except Exception as e:
             errore = True
             log(f"Errore: {e}")
-            try:
-                v.new_session()
-            except Exception:
-                pass
+            v.new_session()
         if not loop:
             break
         attesa = random.uniform(INTERVALLO_MIN, INTERVALLO_MAX)
