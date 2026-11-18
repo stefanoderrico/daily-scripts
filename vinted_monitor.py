@@ -74,7 +74,9 @@ RICERCHE = [
         "escludi": [
             r"\bair\b", r"\bmini\b",
             r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|inch)", r"12[.,]9",  # 12.9" e 13"
-            r"\bcustodia\b", r"\bcover\b", r"\bpellicola\b", r"vetro temperato",
+            # accessori venduti da soli: solo se il titolo COMINCIA con l'accessorio
+            # (così "iPad Pro M4 + custodia" passa, "Custodia per iPad Pro M4" no)
+            r"^\W*(custodia|cover|pellicola|vetro|magic keyboard|tastiera|apple pencil|pencil|smart folio|folio)\b",
         ],
         "escludi_descrizione": [r"\b1[23](?:[.,]9)?\s*(\"|”|″|''|pollici|pollic|inch)", r"12[.,]9"],
         "salva_se_descrizione": [r"\b11\s*(\"|”|″|''|pollici|pollic|inch)"],
