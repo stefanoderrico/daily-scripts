@@ -47,7 +47,12 @@ RICERCHE = [
         "nome": "MacBook Pro 16",
         "cerca": 'macbook pro 16"',
         "cerca_subito": "macbook pro 16",
-        "min": 250, "max": 1600,
+        "min": 250, "max": 1750,
+        # Tra 1600 e 1750 € segnala SOLO se titolo o descrizione citano
+        # un chip Max oppure più di 32 GB di RAM
+        "max_base": 1600,
+        "sopra_max_base_se": [r"\bm\s*[1-5]\s*-?\s*max\b",
+                              r"\b(36|48|64|96|128)\s*gb\b", r"\bram\s*:?\s*(36|48|64|96|128)\b"],
         "richiedi": [r"mac\s*bo+c?k"],          # accetta anche "mac book", "macboock"
         "almeno_una": [],
         "escludi": [
@@ -247,10 +252,17 @@ def motivo_esclusione(item: dict, ric: dict):
         return f"prezzo {p:.0f} € fuori range"
     if ric["almeno_una"] and not any(re.search(rx, titolo, re.I) for rx in ric["almeno_una"]):
         return MODELLO_NON_INDICATO
+    if p > ric.get("max_base", ric["max"]) and not sopra_soglia_ok(titolo, ric):
+        return SOPRA_SOGLIA
     return None
 
 
 MODELLO_NON_INDICATO = "modello non indicato nel titolo"
+SOPRA_SOGLIA = "prezzo sopra soglia senza chip Max / RAM > 32 GB nel titolo"
+
+
+def sopra_soglia_ok(testo: str, ric: dict) -> bool:
+    return any(re.search(rx, testo or "", re.I) for rx in ric.get("sopra_max_base_se", []))
 
 
 def modello_in_descrizione(testo: str, ric: dict) -> bool:
@@ -314,6 +326,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
         # Controlli sulla descrizione (solo per gli annunci nuovi, per non appesantire)
         if not silenzioso and (
             (motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
+            or motivo == SOPRA_SOGLIA
             or (motivo is None and ric.get("regole_descrizione"))
         ):
             try:
@@ -323,6 +336,9 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
                 desc = it["descrizione"] or ""
                 # modello non nel titolo: lo cerca nella descrizione
                 if motivo == MODELLO_NON_INDICATO and modello_in_descrizione(desc, ric):
+                    motivo = None
+                # prezzo sopra soglia: ok solo se la descrizione cita chip Max / RAM > 32 GB
+                if motivo == SOPRA_SOGLIA and sopra_soglia_ok(desc, ric):
                     motivo = None
                 # regole sulla descrizione (misura o modello sbagliati)
                 for regola in ric.get("regole_descrizione", []) if motivo is None else []:
