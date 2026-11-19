@@ -3,7 +3,12 @@ name: Vinted monitor
 on:
   schedule:
     - cron: "7-59/10 * * * *"   # ogni 10 minuti (UTC; GitHub può ritardare di qualche minuto)
-  workflow_dispatch:          # permette di lanciarlo a mano dalla scheda Actions
+  workflow_dispatch:          # avvio a mano dalla scheda Actions, o automatico da cron-job.org
+    inputs:
+      riepilogo:
+        description: "Manda il riepilogo su Telegram"
+        type: boolean
+        default: true
 
 permissions:
   contents: write             # serve per salvare vinted_seen.json nel repository
@@ -32,6 +37,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          RIEPILOGO: ${{ inputs.riepilogo }}
         run: python vinted_monitor.py
 
       - name: Salva gli annunci già visti
