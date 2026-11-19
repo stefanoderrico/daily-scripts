@@ -481,8 +481,10 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
         save_seen(seen)
         testo = "\n".join(riepilogo)
         log("Controllo completato:\n" + testo)
-        # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram
-        if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram.
+        # Gli avvii automatici da cron-job.org passano riepilogo=false e restano silenziosi.
+        if (os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                and os.getenv("RIEPILOGO", "true").lower() != "false"):
             notifica("✅ Monitor attivo", f"Controllo manuale completato.\n{testo}",
                      "https://github.com/" + os.getenv("GITHUB_REPOSITORY", "") + "/actions")
 
