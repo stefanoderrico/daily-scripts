@@ -36,6 +36,9 @@ CERCA_SU_SUBITO = True  # metti False per disattivare Subito
 # Richiede i secrets EBAY_CLIENT_ID e EBAY_CLIENT_SECRET; senza, eBay viene saltato.
 CERCA_SU_EBAY = True
 EBAY_CONDIZIONI = "2000|2010|2020|2030|2500|3000"  # ricondizionati (vari gradi) + usato
+# eBay: solo oggetti che si trovano in un paese UE (niente dogana, spedizioni ragionevoli)
+EBAY_PAESI_OK = {"IT", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
+                 "HR", "HU", "IE", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK"}
 
 # Esclusioni comuni a tutte le ricerche (regex sul titolo in minuscolo)
 ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
@@ -290,7 +293,8 @@ class EbayAPI:
 
     def cerca(self, ric: dict) -> list:
         filtro = (f"price:[{ric['min']}..{ric['max']}],priceCurrency:EUR,"
-                  f"buyingOptions:{{FIXED_PRICE}},conditionIds:{{{EBAY_CONDIZIONI}}}")
+                  f"buyingOptions:{{FIXED_PRICE}},conditionIds:{{{EBAY_CONDIZIONI}}},"
+                  f"deliveryCountry:IT")
         dati = self._get("/buy/browse/v1/item_summary/search",
                          {"q": ric["cerca_subito"], "sort": "newlyListed", "limit": 100, "filter": filtro})
         items = []
@@ -299,6 +303,8 @@ class EbayAPI:
                 continue
             num = it.get("legacyItemId") or it["itemId"].split("|")[1]
             luogo = it.get("itemLocation") or {}
+            if (luogo.get("country") or "").upper() not in EBAY_PAESI_OK:
+                continue   # fuori dall'UE (es. USA, UK, Cina): spedizione e dogana costose
             items.append({
                 "id": "e" + str(num),
                 "api_id": it["itemId"],
