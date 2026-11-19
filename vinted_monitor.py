@@ -106,9 +106,11 @@ RICERCHE = [
             r"\bair\b", r"\bmini\b",
             r"\b1[23](?:[.,]9)?" + POLLICI, r"12[.,]9",  # 12.9" e 13"
             UNITA_PRIMA + r"13\b",                       # "pollici: 13"
-            # accessori venduti da soli: solo se il titolo COMINCIA con l'accessorio
-            # (così "iPad Pro M4 + custodia" passa, "Custodia per iPad Pro M4" no)
-            r"^\W*(custodia|cover|pellicola|vetro|magic keyboard|tastiera|apple pencil|pencil|smart folio|folio)\b",
+            # accessori venduti da soli: l'accessorio è nominato PRIMA di "iPad"
+            # ("Custodia per iPad Pro M4", "Apple Magic Keyboard per iPad Pro" -> scartati;
+            #  "iPad Pro M4 + custodia", "iPad Pro M4 con Magic Keyboard" -> passano)
+            r"\b(custodia|cover|case|pellicola|vetro|protezione|magic\s*keyboard|keyboard|tastiera"
+            r"|pencil|penna|stylus|smart\s*folio|folio|caricatore|cavo|supporto)\b.*\bi\s*pad",
         ],
         "regole_descrizione": [
             {   # 12.9"/13", a meno che citi anche l'11"
