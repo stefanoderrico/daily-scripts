@@ -71,6 +71,7 @@ RICERCHE = [
             r"\b201[5-9]\b", r"\b2020\b",            # anni pre-2021
             r"\bintel\b", r"\bi[579]\b",             # processori Intel
             r"\bair\b",                              # MacBook Air
+            r"\bneo\b", r"\ba1[5-9]\b",               # MacBook Neo (chip A18 ecc.)
             r"touch\s*bar",                          # solo Intel
             *MACBOOK_ALTRE_MISURE,                   # 13", 14", 15" e codici modello
         ],
@@ -81,9 +82,10 @@ RICERCHE = [
                 "escludi": MACBOOK_ALTRE_MISURE,
                 "salva": [r"\b16" + POLLICI],
             },
-            {   # modello Intel, a meno che citi anche un chip Apple (M1…M5, Pro/Max)
+            {   # modello Intel o MacBook Neo, a meno che citi anche un chip M (M1…M5, Pro/Max)
                 "escludi": [r"\bintel\b", r"\bcore\s*i[3579]\b", r"\bi[3579]\b", r"touch\s*bar",
-                            r"\bradeon\b", r"\b201[5-9]\b", r"\b2020\b"],
+                            r"\bradeon\b", r"\b201[5-9]\b", r"\b2020\b",
+                            r"macbook\s*neo", r"\ba1[5-9]\s*(pro|bionic)\b"],   # MacBook Neo
                 "salva": [r"\bm\s*[1-5]\b", r"apple\s*silicon"],
             },
         ],
