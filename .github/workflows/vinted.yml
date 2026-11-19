@@ -2,7 +2,7 @@ name: Vinted monitor
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # ogni 10 minuti (UTC; GitHub può ritardare di qualche minuto)
+    - cron: "7-59/10 * * * *"   # ogni 10 minuti (UTC; GitHub può ritardare di qualche minuto)
   workflow_dispatch:          # permette di lanciarlo a mano dalla scheda Actions
 
 permissions:
