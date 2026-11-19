@@ -48,9 +48,12 @@ ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
 #   escludi   -> se il titolo contiene una di queste, l'annuncio è scartato
 # Unità di misura dello schermo, anche in altre lingue (Vinted mostra annunci da Francia, Spagna, ecc.)
 POLLICI = r"\s*(\"|”|″|''|pollici|pollic|inch|po\b|pouces?|zoll|pulgadas?|polegadas?)"
+# Unità scritta PRIMA del numero ("POLLICI:13", "display 14", "pouces : 13")
+UNITA_PRIMA = r"(pollici|inch(es)?|pouces?|zoll|pulgadas?|polegadas?|schermo|display)\s*[:=\-]?\s*"
 # MacBook Pro di altre misure: "macbook pro 13/14/15" anche senza unità, e codici modello
 MACBOOK_ALTRE_MISURE = [
     r"\b1[345]" + POLLICI,                                   # 13", 14 pollici, 13 pouces...
+    UNITA_PRIMA + r"1[345]\b",                               # "pollici: 13", "schermo 14"
     r"mac\s*book\s*pro\s*(m\s*[1-5]\s*(pro|max)?\s*)?1[345]\b",  # "macbook pro 13", "macbook pro m1 14"
     r"\ba(1706|1708|1989|2159|2251|2289|2338|2442|2779|2918|2992)\b",  # codici modello 13"/14"
 ]
@@ -80,7 +83,7 @@ RICERCHE = [
         "regole_descrizione": [
             {   # misura sbagliata (13", 14", 15"), a meno che citi anche il 16"
                 "escludi": MACBOOK_ALTRE_MISURE,
-                "salva": [r"\b16" + POLLICI],
+                "salva": [r"\b16" + POLLICI, UNITA_PRIMA + r"16\b"],
             },
             {   # modello Intel o MacBook Neo, a meno che citi anche un chip M (M1…M5, Pro/Max)
                 "escludi": [r"\bintel\b", r"\bcore\s*i[3579]\b", r"\bi[3579]\b", r"touch\s*bar",
@@ -102,14 +105,15 @@ RICERCHE = [
         "escludi": [
             r"\bair\b", r"\bmini\b",
             r"\b1[23](?:[.,]9)?" + POLLICI, r"12[.,]9",  # 12.9" e 13"
+            UNITA_PRIMA + r"13\b",                       # "pollici: 13"
             # accessori venduti da soli: solo se il titolo COMINCIA con l'accessorio
             # (così "iPad Pro M4 + custodia" passa, "Custodia per iPad Pro M4" no)
             r"^\W*(custodia|cover|pellicola|vetro|magic keyboard|tastiera|apple pencil|pencil|smart folio|folio)\b",
         ],
         "regole_descrizione": [
             {   # 12.9"/13", a meno che citi anche l'11"
-                "escludi": [r"\b1[23](?:[.,]9)?" + POLLICI, r"12[.,]9"],
-                "salva": [r"\b11" + POLLICI],
+                "escludi": [r"\b1[23](?:[.,]9)?" + POLLICI, r"12[.,]9", UNITA_PRIMA + r"13\b"],
+                "salva": [r"\b11" + POLLICI, UNITA_PRIMA + r"11\b"],
             },
         ],
     },
