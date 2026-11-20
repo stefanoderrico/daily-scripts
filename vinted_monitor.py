@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Monitor annunci su Vinted, Subito ed eBay (MacBook Pro 16", iPad Pro 11" M4/M5).
+Monitor annunci su Vinted, Subito ed eBay (MacBook Pro 16", iPad Pro 11" M4/M5, PS5 Pro).
 
 Uso:
     python3 vinted_monitor.py            # un solo controllo (per launchd/cron)
-    python3 vinted_monitor.py --loop     # gira in continuo, ogni 10-12 min
+    python3 vinted_monitor.py --loop     # gira in continuo, ogni 5-6 min
     python3 vinted_monitor.py --test     # stampa cosa passa e cosa viene escluso, senza notifiche
 
 Dipendenze:
@@ -31,6 +31,8 @@ from curl_cffi import requests
 
 DOMAIN = "https://www.vinted.it"
 SUBITO_URL = "https://www.subito.it/annunci-italia/vendita/informatica/"  # tutta Italia
+# Categoria Subito diversa per una ricerca: chiave "subito_url" nella ricerca
+SUBITO_URL_CONSOLE = "https://www.subito.it/annunci-italia/vendita/videogiochi/"
 CERCA_SU_SUBITO = True  # metti False per disattivare Subito
 # eBay (API ufficiale): solo "Compralo Subito", usato + ricondizionato, "appena messi in vendita".
 # Richiede i secrets EBAY_CLIENT_ID e EBAY_CLIENT_SECRET; senza, eBay viene saltato.
@@ -122,10 +124,30 @@ RICERCHE = [
             },
         ],
     },
+    {
+        "nome": "PS5 Pro",
+        "cerca": "ps5 pro",
+        "cerca_subito": "ps5 pro",
+        "subito_url": SUBITO_URL_CONSOLE,
+        "min": 20, "max": 500,
+        "richiedi": [r"(\bps\s*5|play\s*station\s*5)", r"(\bpro\b|ps\s*5\s*pro\b)"],   # anche "PS5Pro"
+        "almeno_una": [],
+        "escludi": [
+            r"\bps\s*4\b", r"play\s*station\s*4",               # PS4 Pro
+            r"\bportal\b", r"\bvr\s*2?\b",                        # PlayStation Portal, PS VR2
+            r"\b(solo\s+scatola|scatola\s+vuota|box\s+vuot[oa])\b",
+            r"\b(per\s+(pezzi|ricambi)|non\s+funzionante|guast[oa]|rott[oa]|difettos[oa])\b",
+            # accessori venduti da soli: l'accessorio è nominato PRIMA di "PS5"
+            # ("Lettore disco per PS5 Pro" -> scartato; "PS5 Pro + lettore disco" -> passa)
+            r"\b(lettore|disc\s*drive|controller|joystick|dualsense|manett[ae]|cover|custodia"
+            r"|skin|supporto|stand|base|ventola|cuffie|headset|caricatore|ssd|gioco|giochi)\b.*"
+            r"(\bps\s*5|play\s*station\s*5)",
+        ],
+    },
 ]
 
-INTERVALLO_MIN = 10 * 60   # per --loop
-INTERVALLO_MAX = 12 * 60
+INTERVALLO_MIN = 5 * 60    # per --loop
+INTERVALLO_MAX = 6 * 60
 
 BASE_DIR = Path(__file__).resolve().parent
 SEEN_FILE = BASE_DIR / "vinted_seen.json"
@@ -226,7 +248,7 @@ def parse_catalogo(page: str) -> list:
 def cerca_subito(sessione, ric: dict) -> list:
     """Legge la pagina di ricerca di Subito (i dati sono nel JSON __NEXT_DATA__)."""
     params = {"q": ric["cerca_subito"], "ps": ric["min"], "pe": ric["max"], "order": "datedesc"}
-    r = sessione.get(SUBITO_URL, params=params, timeout=30)
+    r = sessione.get(ric.get("subito_url", SUBITO_URL), params=params, timeout=30)
     r.raise_for_status()
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
     if not m:
