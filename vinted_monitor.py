@@ -141,10 +141,28 @@ RICERCHE = [
             r"\b(solo\s+scatola|scatola\s+vuota|box\s+vuot[oa])\b",
             r"\b(per\s+(pezzi|ricambi)|non\s+funzionante|guast[oa]|rott[oa]|difettos[oa])\b",
             # accessori venduti da soli: l'accessorio è nominato PRIMA di "PS5"
-            # ("Lettore disco per PS5 Pro" -> scartato; "PS5 Pro + lettore disco" -> passa)
-            r"\b(lettore|disc\s*drive|controller|joystick|dualsense|manett[ae]|cover|custodia"
-            r"|skin|supporto|stand|base|ventola|cuffie|headset|caricatore|ssd|gioco|giochi)\b.*"
-            r"(\bps\s*5|play\s*station\s*5)",
+            # ("Lettore disco per PS5 Pro" -> scartato; "PS5 Pro + lettore disco" -> passa).
+            # Parole in italiano, inglese, francese, spagnolo, tedesco e portoghese, con i plurali.
+            r"\b("
+            # controller
+            r"controller[s]?|joysticks?|gamepads?|pads?|dualsense|dual\s*sense|manett[ae]s?"
+            r"|mand(o|os)|comand(o|os)|steuerung"
+            # lettore disco
+            r"|lettor[ei]|disc\s*drives?|lecteurs?|lector(es)?|laufwerke?|leitor(es)?"
+            # cover e custodie
+            r"|covers?|custodi[ae]|cases?|housses?|[ée]tuis?|coques?|fundas?|h[üu]llen?|capas?"
+            r"|skins?|stickers?|adesivi"
+            # supporti
+            r"|support[oi]?|supports|stands?|basi?|bases|soportes?|suportes?|halterung(en)?|st[äa]nder"
+            # ventole
+            r"|ventol[ae]|fans?|ventilateurs?|ventilador(es)?|l[üu]fter"
+            # cuffie
+            r"|cuffi[ae]|headsets?|headphones?|casques?|auriculares|cascos|kopfh[öo]rer|fones"
+            # caricatori
+            r"|caricator[ei]|chargers?|chargeurs?|cargador(es)?|carregador(es)?|ladestation(en)?|ladeger[äa]te?"
+            # SSD e giochi
+            r"|ssd|gioc(o|hi)|games?|jeux?|juegos?|spiele?|jogos?"
+            r")\b.*(\bps\s*5|play\s*station\s*5)",
         ],
     },
 ]
