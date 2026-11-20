@@ -129,6 +129,9 @@ RICERCHE = [
         "cerca": "ps5 pro",
         "cerca_subito": "ps5 pro",
         "subito_url": SUBITO_URL_CONSOLE,
+        # Su Vinted cerca solo nella categoria "Console" (niente controller,
+        # accessori o annunci-truffa che vendono "la foto" della console)
+        "vinted_categoria": 3025,
         "min": 20, "max": 500,
         "richiedi": [r"(\bps\s*5|play\s*station\s*5)", r"(\bpro\b|ps\s*5\s*pro\b)"],   # anche "PS5Pro"
         "almeno_una": [],
@@ -207,6 +210,8 @@ class Vinted:
             "price_from": ric["min"],
             "price_to": ric["max"],
         }
+        if ric.get("vinted_categoria"):
+            params["catalog[]"] = ric["vinted_categoria"]
         for _ in range(2):
             r = self.s.get(DOMAIN + "/catalog", params=params, timeout=30)
             if r.status_code in (401, 403, 429):
