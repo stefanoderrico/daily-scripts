@@ -151,6 +151,7 @@ INTERVALLO_MAX = 6 * 60
 
 BASE_DIR = Path(__file__).resolve().parent
 SEEN_FILE = BASE_DIR / "vinted_seen.json"
+PREZZI_FILE = BASE_DIR / "vinted_prezzi.json"   # ultimo prezzo visto per ogni annuncio
 LOG_FILE = BASE_DIR / "vinted_monitor.log"
 
 # ──────────────────────────────────────────────────────────────────
@@ -175,6 +176,19 @@ def save_seen(seen: list) -> None:
     marker = [x for x in seen if str(x).startswith("#")]
     ids = [x for x in seen if not str(x).startswith("#")]
     SEEN_FILE.write_text(json.dumps(marker + ids[-5000:]))  # tieni solo gli ultimi 5000 annunci
+
+
+def load_prezzi() -> dict:
+    try:
+        return json.loads(PREZZI_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_prezzi(prezzi: dict, seen: list) -> None:
+    tenuti = {str(x) for x in seen}   # stessi annunci di vinted_seen.json
+    PREZZI_FILE.write_text(json.dumps({k: v for k, v in prezzi.items() if k in tenuti},
+                                      separators=(",", ":")))
 
 
 class Vinted:
@@ -409,9 +423,42 @@ def notifica(titolo: str, testo: str, url: str) -> None:
             log(f"Errore Telegram: {e}")
 
 
+def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descrizione):
+    """Controlli sulla descrizione (solo quando servono, per non appesantire)."""
+    if not ((motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
+            or motivo == SOPRA_SOGLIA
+            or (motivo is None and ric.get("regole_descrizione"))):
+        return motivo
+    try:
+        if "descrizione" not in it:
+            it["descrizione"] = leggi_descrizione(it["url"])
+            time.sleep(random.uniform(1, 3))
+        desc = it["descrizione"] or ""
+        # modello non nel titolo: lo cerca nella descrizione
+        if motivo == MODELLO_NON_INDICATO and modello_in_descrizione(desc, ric):
+            motivo = None
+        # prezzo sopra soglia: ok solo se la descrizione cita chip Max / RAM > 32 GB
+        if motivo == SOPRA_SOGLIA and sopra_soglia_ok(desc, ric):
+            motivo = None
+        # regole sulla descrizione (misura o modello sbagliati)
+        for regola in ric.get("regole_descrizione", []) if motivo is None else []:
+            m = next((re.search(rx, desc, re.I) for rx in regola["escludi"]
+                      if re.search(rx, desc, re.I)), None)
+            salva = any(re.search(rx, desc, re.I) for rx in regola.get("salva", []))
+            if m and not salva:
+                motivo = f"descrizione cita '{m.group(0)}'"
+                log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
+                break
+    except Exception as e:
+        log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
+    return motivo
+
+
 def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bool,
-            leggi_descrizione=lambda url: "") -> int:
-    """Notifica gli annunci nuovi che passano i filtri. Ritorna quanti ne ha segnalati."""
+            leggi_descrizione=lambda url: "", prezzi: dict | None = None) -> int:
+    """Notifica gli annunci nuovi (o ribassati) che passano i filtri. Ritorna quanti ne ha segnalati."""
+    if prezzi is None:
+        prezzi = {}
     # La prima volta che una ricerca gira su una fonte, gli annunci già online
     # vengono solo memorizzati, così non arrivano decine di notifiche insieme.
     marker = f"#init:{ric['nome']}:{fonte}"
@@ -437,49 +484,39 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
             print(f"[{ric['nome'][:12]:12}|{fonte:6}] {p:>6.0f} €  {stato:35}  {it.get('title')}  {url}")
             continue
 
+        dove = f", {it['dove']}" if it.get("dove") else ""
+        chiave = str(iid)
+        prima = prezzi.get(chiave)
+        if p > 0:
+            prezzi[chiave] = p
+
         if iid in visti:
+            # Annuncio già visto: notifica solo se il prezzo è sceso e ora passa i filtri.
+            # (Senza prezzo salvato, cioè visto prima di questa versione, lo memorizza e basta.)
+            if prima is None or p <= 0 or p >= prima - 0.5:
+                continue
+            motivo = controlli_descrizione(it, ric, fonte, motivo, leggi_descrizione)
+            log(f"Ribasso {ric['nome']} ({fonte}): {prima:.0f} → {p:.0f} € – {it.get('title')} – "
+                f"{'notificato' if motivo is None else motivo} – {url}")
+            if motivo is None:
+                nuovi += 1
+                notifica(f"📉 {ric['nome']}: da {prima:.0f} a {p:.0f} € ({fonte}{dove})",
+                         it.get("title", ""), url)
             continue
+
         seen.append(iid)
         visti.add(iid)
-
-        # Controlli sulla descrizione (solo per gli annunci nuovi, per non appesantire)
-        if not silenzioso and (
-            (motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
-            or motivo == SOPRA_SOGLIA
-            or (motivo is None and ric.get("regole_descrizione"))
-        ):
-            try:
-                if "descrizione" not in it:
-                    it["descrizione"] = leggi_descrizione(it["url"])
-                    time.sleep(random.uniform(1, 3))
-                desc = it["descrizione"] or ""
-                # modello non nel titolo: lo cerca nella descrizione
-                if motivo == MODELLO_NON_INDICATO and modello_in_descrizione(desc, ric):
-                    motivo = None
-                # prezzo sopra soglia: ok solo se la descrizione cita chip Max / RAM > 32 GB
-                if motivo == SOPRA_SOGLIA and sopra_soglia_ok(desc, ric):
-                    motivo = None
-                # regole sulla descrizione (misura o modello sbagliati)
-                for regola in ric.get("regole_descrizione", []) if motivo is None else []:
-                    m = next((re.search(rx, desc, re.I) for rx in regola["escludi"]
-                              if re.search(rx, desc, re.I)), None)
-                    salva = any(re.search(rx, desc, re.I) for rx in regola.get("salva", []))
-                    if m and not salva:
-                        motivo = f"descrizione cita '{m.group(0)}'"
-                        log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {url}")
-                        break
-            except Exception as e:
-                log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
+        if not silenzioso:
+            motivo = controlli_descrizione(it, ric, fonte, motivo, leggi_descrizione)
 
         if motivo is None and not silenzioso:
             nuovi += 1
-            dove = f", {it['dove']}" if it.get("dove") else ""
             log(f"NUOVO {ric['nome']} ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
             notifica(f"{ric['nome']} a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url)
     return nuovi
 
 
-def controllo(v: Vinted, seen: list, test: bool) -> None:
+def controllo(v: Vinted, seen: list, test: bool, prezzi: dict) -> None:
     visti = set(seen)
     riepilogo = []
     errori_vinted = 0
@@ -491,8 +528,8 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
             items = v.search(ric)
             if not items:
                 raise RuntimeError("nessun annuncio ricevuto (possibile blocco)")
-            n = esamina(ric, "Vinted", items, seen, visti, test, v.descrizione)
-            riepilogo.append(f"{ric['nome']} – Vinted: {len(items)} letti, {n} nuovi")
+            n = esamina(ric, "Vinted", items, seen, visti, test, v.descrizione, prezzi)
+            riepilogo.append(f"{ric['nome']} – Vinted: {len(items)} letti, {n} segnalati")
         except Exception as e:
             errori_vinted += 1
             log(f"Errore Vinted ({ric['nome']}): {e}")
@@ -503,8 +540,8 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
         if CERCA_SU_SUBITO:
             try:
                 items_s = cerca_subito(v.s, ric)
-                n = esamina(ric, "Subito", items_s, seen, visti, test)
-                riepilogo.append(f"{ric['nome']} – Subito: {len(items_s)} letti, {n} nuovi")
+                n = esamina(ric, "Subito", items_s, seen, visti, test, prezzi=prezzi)
+                riepilogo.append(f"{ric['nome']} – Subito: {len(items_s)} letti, {n} segnalati")
             except Exception as e:
                 log(f"Errore Subito ({ric['nome']}): {e}")
                 riepilogo.append(f"{ric['nome']} – Subito: errore ({e})")
@@ -514,8 +551,8 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
                 items_e = ebay.cerca(ric)
                 per_url = {it["url"]: it for it in items_e}
                 n = esamina(ric, "eBay", items_e, seen, visti, test,
-                            lambda url: ebay.descrizione(per_url[url]))
-                riepilogo.append(f"{ric['nome']} – eBay: {len(items_e)} letti, {n} nuovi")
+                            lambda url: ebay.descrizione(per_url[url]), prezzi)
+                riepilogo.append(f"{ric['nome']} – eBay: {len(items_e)} letti, {n} segnalati")
             except Exception as e:
                 log(f"Errore eBay ({ric['nome']}): {e}")
                 riepilogo.append(f"{ric['nome']} – eBay: errore ({e})")
@@ -523,6 +560,7 @@ def controllo(v: Vinted, seen: list, test: bool) -> None:
 
     if not test:
         save_seen(seen)
+        save_prezzi(prezzi, seen)
         testo = "\n".join(riepilogo)
         log("Controllo completato:\n" + testo)
         # Se lanciato a mano da GitHub (Run workflow), manda una conferma su Telegram.
@@ -540,6 +578,7 @@ def main() -> None:
     test = "--test" in sys.argv
     loop = "--loop" in sys.argv and not test
     seen = load_seen()
+    prezzi = load_prezzi()
     if not (os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")) and sys.platform != "darwin":
         log("Attenzione: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID non impostati, nessuna notifica verrà inviata.")
 
@@ -548,7 +587,7 @@ def main() -> None:
 
     while True:
         try:
-            controllo(v, seen, test)
+            controllo(v, seen, test, prezzi)
             errore = False
         except Exception as e:
             errore = True
