@@ -140,9 +140,12 @@ RICERCHE = [
             r"\bportal\b", r"\bvr\s*2?\b",                        # PlayStation Portal, PS VR2
             r"\b(solo\s+scatola|scatola\s+vuota|box\s+vuot[oa])\b",
             r"\b(per\s+(pezzi|ricambi)|non\s+funzionante|guast[oa]|rott[oa]|difettos[oa])\b",
-            # accessori venduti da soli: l'accessorio è nominato PRIMA di "PS5"
-            # ("Lettore disco per PS5 Pro" -> scartato; "PS5 Pro + lettore disco" -> passa)
-            r"\b(lettore|disc\s*drive|controller|joystick|dualsense|manett[ae]|cover|custodia"
+        ],
+        # Accessori venduti da soli: l'accessorio è nominato PRIMA di "PS5"
+        # ("Lettore disco per PS5 Pro" -> scartato; "PS5 Pro + lettore disco" -> passa).
+        # Non si applica su Vinted, dove basta già il filtro sulla categoria Console.
+        "escludi_accessori": [
+            r"\b(lettore|disc\s*drive|controller|joystick|dualsense|manett[ae]s?|cover|custodia"
             r"|skin|supporto|stand|base|ventola|cuffie|headset|caricatore|ssd|gioco|giochi)\b.*"
             r"(\bps\s*5|play\s*station\s*5)",
         ],
@@ -220,7 +223,11 @@ class Vinted:
                 self.new_session()
                 continue
             r.raise_for_status()
-            return parse_catalogo(r.text)
+            items = parse_catalogo(r.text)
+            if ric.get("vinted_categoria"):
+                for it in items:
+                    it["categoria_ok"] = True   # già filtrati per categoria da Vinted
+            return items
         return []
 
 
@@ -381,7 +388,8 @@ def motivo_esclusione(item: dict, ric: dict):
     for rx in ric["richiedi"]:
         if not re.search(rx, titolo, re.I):
             return f"manca '{rx}'"
-    for rx in ric["escludi"] + ESCLUDI_SEMPRE:
+    accessori = [] if item.get("categoria_ok") else ric.get("escludi_accessori", [])
+    for rx in ric["escludi"] + accessori + ESCLUDI_SEMPRE:
         m = re.search(rx, titolo, re.I)
         if m:
             return f"contiene '{m.group(0)}'"
