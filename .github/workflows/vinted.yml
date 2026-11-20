@@ -11,7 +11,7 @@ on:
         default: true
 
 permissions:
-  contents: write             # serve per salvare vinted_seen.json nel repository
+  contents: write             # serve per salvare vinted_seen.json e vinted_prezzi.json nel repository
 
 concurrency:
   group: vinted-monitor       # evita due esecuzioni sovrapposte
@@ -45,7 +45,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vinted_seen.json 2>/dev/null || exit 0
+          git add vinted_seen.json vinted_prezzi.json 2>/dev/null || git add vinted_seen.json 2>/dev/null || exit 0
           git diff --cached --quiet && exit 0
           git commit -m "Aggiorna annunci visti"
           git pull --rebase -X theirs || true
