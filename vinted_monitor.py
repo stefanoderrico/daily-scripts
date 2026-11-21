@@ -67,10 +67,16 @@ MACBOOK_ALTRE_MISURE = [
 # BASE: segnali quasi sempre di truffa/fuffa, usati su tutte le fonti (anche Subito).
 ANTI_TRUFFA_BASE = [
     # vende solo la foto
-    r"\bsol[oa]\s+(la\s+)?fot[oa]\b", r"\b(foto|immagine|stampa)\s+stampat[ao]", r"\bprinted\s+(photo|picture|image)", r"\b(photo|image)\s+imprim[ée]e",
-    r"\bgedruckte[sn]?\s+(foto|bild)", r"\b(foto|imagen)\s+impres[ao]", r"\b(foto|imagem)\s+impress[ao]", r"\b(only|just)\s+(the\s+)?(photo|picture|image)\b",
-    r"\b(photo|picture)\s+only\b", r"\bnur\s+(das\s+)?(foto|bild)\b", r"\b(seulement|uniquement)\s+(la\s+)?photo\b",
-    r"\bsolo\s+(la\s+)?imagen\b", r"\bapenas\s+(a\s+)?foto\b", r"\bnon\s+(verr[àa]|viene|sar[àa])\s+spedit[ao]",
+    r"\bs[oó]l[oa]\s+(la\s+|le\s+|una\s+|un'|delle\s+)?fot[oa]\b", r"\b(foto|immagine|stampa)\s+stampat[ao]", r"\bprinted\s+(photo|picture|image)", r"\b(photo|image)\s+imprim[ée]e",
+    r"\bgedruckte[sn]?\s+(foto|bild)", r"\b(foto|imagen)\s+impres[ao]", r"\b(foto|imagem)\s+impress[ao]", r"\b(only|just)\s+(a\s+|the\s+)?(photo|picture|image)s?\b",
+    r"\b(photo|picture)\s+only\b", r"\bnur\s+(das\s+|ein\s+|die\s+)?(foto|bild)(s|er)?\b", r"\b(seulement|uniquement)\s+(la\s+|les\s+|une\s+|des\s+)?photos?\b",
+    r"\bvends?\s+(que|seulement|uniquement)\s+(la\s+|les\s+|une\s+|des\s+)?photos?\b",
+    r"\bs[oó]lo\s+(la\s+|una\s+)?imagen\b", r"\bapenas\s+(a\s+|uma\s+)?fotos?\b", r"\bnon\s+(verr[àa]|viene|sar[àa])\s+spedit[ao]",
+    # dichiara che non vende la console ("NON È LA PS5 PRO"), ma non "non è la PS5 slim/normale"
+    r"\bnon\s+[èe]\s+(la\s+|una\s+)?(ps\s*5|playstation(\s*5)?|console)(?!\s*(slim|normale|base|standard|fat|liscia|digital))",
+    r"\b(is\s+)?not\s+(a|the)\s+(ps\s*5|playstation(\s*5)?|console)(?!\s*(slim|standard|base|fat|digital))",
+    r"\bce\s+n'?\s*est\s+pas\s+(la|une)\s+(ps\s*5|playstation|console)", r"\b(nicht|keine)\s+(die\s+)?(ps\s*5|playstation|konsole)\b",
+    r"\bno\s+es\s+(la|una)\s+(ps\s*5|playstation|consola)",
     # bonifico
     r"\bbonific", r"\bvirement", r"[üu]berweisung", r"\btransferencia", r"\b(bank|wire)\s*transfer", r"\biban\b",
     # chi cerca invece di vendere
@@ -95,6 +101,9 @@ ANTI_TRUFFA_COMPLETO = ANTI_TRUFFA_BASE + [
     r"\b(not|no)\s+(through|via)\s+(vinted|ebay|the\s+(system|platform))", r"\bhors\s+(de\s+)?vinted",
     r"\bohne\s+vinted", r"\bfuera\s+de\s+vinted",
     r"\b(vendita|ordine|acquisto)\s+((verr|sar)[àa]\s+)?annullat",
+    # deposito / acconto pagato a parte
+    r"\bdeposit[oi]?\b", r"\bacconto\b", r"\bcaparra\b", r"\banticipo\s+di\b", r"\bpagamento\s+anticipat",
+    r"\bdown\s*payment\b", r"\bacompte\b", r"\banzahlung\b", r"\bdep[óo]sito\b", r"\bse[ñn]al\b",
 ]
 # Concorsi / giveaway (solo Vinted): "PS5 Pro in palio, segui il profilo e metti mi piace"
 CONCORSI = [
@@ -190,6 +199,8 @@ RICERCHE = [
         # traduce la descrizione in italiano e applica i filtri anche alla traduzione;
         # scarta le descrizioni scritte in lingue insolite (vedi LINGUE_OK)
         "traduci_descrizione": True,
+        # descrizioni piene di hashtag o lunghissime: tipiche degli annunci-truffa (solo Vinted)
+        "limiti_descrizione": {"Vinted": {"hashtag": 15, "caratteri": 2000}},
         "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + CONCORSI,
                         "eBay": ANTI_TRUFFA_COMPLETO,
                         "Subito": ANTI_TRUFFA_BASE},
@@ -210,7 +221,7 @@ RICERCHE = [
             # lettore disco
             r"|lettor[ei]|disc\s*drives?|lecteurs?|lector(es)?|laufwerke?|leitor(es)?"
             # cover e custodie
-            r"|covers?|custodi[ae]|cases?|housses?|[ée]tuis?|coques?|fundas?|h[üu]llen?|capas?"
+            r"|covers?|copertur[ae]|scocc(a|he)|pannell[oi]|faceplates?|plates?|custodi[ae]|cases?|housses?|[ée]tuis?|coques?|fundas?|h[üu]llen?|capas?"
             r"|skins?|stickers?|adesivi"
             # supporti
             r"|support[oi]?|supports|stands?|basi?|bases|soportes?|suportes?|halterung(en)?|st[äa]nder"
@@ -375,18 +386,23 @@ def cerca_subito(sessione, ric: dict) -> list:
 def traduci(testo: str) -> tuple:
     """Traduce in italiano con Google Translate (servizio gratuito non ufficiale).
     Ritorna (traduzione, lingua rilevata). Se non riesce ritorna ("", None)."""
-    testo = (testo or "").strip()[:1500]
+    # toglie gli hashtag (riempitivo) e traduce fino a ~4500 caratteri, a blocchi da 1500
+    testo = re.sub(r"\s+", " ", re.sub(r"#\w+", " ", testo or "")).strip()[:4500]
     if not testo:
         return "", None
     try:
-        r = requests.get("https://translate.googleapis.com/translate_a/single",
-                         params={"client": "gtx", "sl": "auto", "tl": "it", "dt": "t", "q": testo},
-                         timeout=15)
-        r.raise_for_status()
-        dati = r.json()
-        traduzione = "".join(parte[0] for parte in (dati[0] or []) if parte and parte[0])
-        lingua = dati[2] if len(dati) > 2 and isinstance(dati[2], str) else None
-        return traduzione, lingua
+        traduzioni, lingua = [], None
+        for i in range(0, len(testo), 1500):
+            r = requests.get("https://translate.googleapis.com/translate_a/single",
+                             params={"client": "gtx", "sl": "auto", "tl": "it", "dt": "t",
+                                     "q": testo[i:i + 1500]},
+                             timeout=15)
+            r.raise_for_status()
+            dati = r.json()
+            traduzioni.append("".join(parte[0] for parte in (dati[0] or []) if parte and parte[0]))
+            if lingua is None and len(dati) > 2 and isinstance(dati[2], str):
+                lingua = dati[2]
+        return " ".join(traduzioni), lingua
     except Exception as e:
         log(f"Traduzione non riuscita: {e}")
         return "", None
@@ -555,7 +571,16 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
         # filtri anti-truffa (titolo + descrizione)
         if motivo is None and ric.get("anti_truffa", {}).get(fonte):
             testo = f"{it.get('title', '')}\n{desc}"
-            if ric.get("traduci_descrizione") and desc.strip():
+            limiti = ric.get("limiti_descrizione", {}).get(fonte)
+            if limiti:
+                n_hashtag = len(re.findall(r"#\w+", desc))
+                if n_hashtag > limiti.get("hashtag", 10**9):
+                    motivo = f"possibile truffa: {n_hashtag} hashtag nella descrizione"
+                elif len(desc) > limiti.get("caratteri", 10**9):
+                    motivo = f"possibile truffa: descrizione molto lunga ({len(desc)} caratteri)"
+                if motivo:
+                    log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
+            if motivo is None and ric.get("traduci_descrizione") and desc.strip():
                 traduzione, lingua = traduci(desc)
                 testo += "\n" + traduzione
                 if lingua and lingua.lower() not in LINGUE_OK and len(desc.split()) >= MIN_PAROLE_LINGUA:
