@@ -95,9 +95,17 @@ ANTI_TRUFFA_COMPLETO = ANTI_TRUFFA_BASE + [
     r"\bohne\s+vinted", r"\bfuera\s+de\s+vinted",
     r"\b(vendita|ordine|acquisto)\s+((verr|sar)[àa]\s+)?annullat",
 ]
-# Numeri di cellulare (solo Vinted): "+39 331 2682313", "3312682313", "331_2682313"
-TELEFONO = [r"(\+|\b00)\s*\d{2}[\s.\-_]?\d{3}[\s.\-_]?\d{3}[\s.\-_]?\d{3,4}\b",
-            r"\b3\d{2}[\s.\-_]?\d{3}[\s.\-_]?\d{3,4}\b"]
+# Concorsi / giveaway (solo Vinted): "PS5 Pro in palio, segui il profilo e metti mi piace"
+CONCORSI = [
+    r"\bconcors[oi]\b", r"\bin\s+palio\b", r"\bestrazion[ei]\b", r"\bsorteggi[oa]\b", r"\blotteri[ae]\b",
+    r"\bvinc(i|ere|ita)\b", r"\bsegui(te)?\s+(il\s+|la\s+)?(mio\s+)?(profilo|pagina|account)",
+    r"\bmett(i|ete)\s+(un\s+)?mi\s*piace", r"\blascia(te)?\s+(un\s+)?(mi\s*piace|like|cuore)",
+    r"\bgive\s*aways?\b", r"\bcontests?\b", r"\braffles?\b", r"\bsweepstakes?\b", r"\b(to\s+)?win\b",
+    r"\bfollow\s+(me|my|the|our)\b", r"\blike\s+(this|the)\s+(post|ad|item|listing)\b",
+    r"\bconcours\b", r"\b[àa]\s+gagner\b", r"\btirage\s+au\s+sort\b", r"\babonne[zr]?[\s-]+(vous|toi)\b",
+    r"\bgewinnspiel", r"\bverlosung", r"\bzu\s+gewinnen\b", r"\bfolg(t|e)\s+(mir|uns)\b",
+    r"\bsorteo\b", r"\bconcurso\b", r"\bsorteio\b", r"\bpassatempo\b", r"\bs[ií]gue(me|nos)\b",
+]
 
 RICERCHE = [
     {
@@ -171,7 +179,7 @@ RICERCHE = [
         "vinted_categoria": 3025,
         "min": 100, "max": 500,
         # filtri anti-truffa su titolo + descrizione, diversi per fonte
-        "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + TELEFONO,
+        "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + CONCORSI,
                         "eBay": ANTI_TRUFFA_COMPLETO,
                         "Subito": ANTI_TRUFFA_BASE},
         "richiedi": [r"(\bps\s*5|play\s*station\s*5)", r"(\bpro\b|ps\s*5\s*pro\b)"],   # anche "PS5Pro"
