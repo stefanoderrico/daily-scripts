@@ -62,6 +62,43 @@ MACBOOK_ALTRE_MISURE = [
     r"mac\s*book\s*pro\s*(m\s*[1-5]\s*(pro|max)?\s*)?1[345]\b",  # "macbook pro 13", "macbook pro m1 14"
     r"\ba(1706|1708|1989|2159|2251|2289|2338|2442|2779|2918|2992)\b",  # codici modello 13"/14"
 ]
+# ── Filtri anti-truffa (per ora usati solo dalla ricerca PS5 Pro) ──
+# Controllati su titolo + descrizione, in italiano, inglese, francese, tedesco, spagnolo, portoghese.
+# BASE: segnali quasi sempre di truffa/fuffa, usati su tutte le fonti (anche Subito).
+ANTI_TRUFFA_BASE = [
+    # vende solo la foto
+    r"\bsol[oa]\s+(la\s+)?fot[oa]\b", r"\bfoto\s+stampata", r"\b(only|just)\s+(the\s+)?(photo|picture|image)\b",
+    r"\b(photo|picture)\s+only\b", r"\bnur\s+(das\s+)?(foto|bild)\b", r"\b(seulement|uniquement)\s+(la\s+)?photo\b",
+    r"\bsolo\s+(la\s+)?imagen\b", r"\bapenas\s+(a\s+)?foto\b", r"\bnon\s+(verr[àa]|viene|sar[àa])\s+spedit[ao]",
+    # bonifico
+    r"\bbonific", r"\bvirement", r"[üu]berweisung", r"\btransferencia", r"\b(bank|wire)\s*transfer", r"\biban\b",
+    # chi cerca invece di vendere
+    r"\bcerc(o|hiamo)\b", r"\bcompro\b", r"\b(re)?cherche\b", r"\bach[eè]te\b", r"\bbusco\b", r"\bsuche\b",
+    r"\blooking\s+for\b", r"\bwtb\b", r"\bprocuro\b",
+    # truffa
+    r"\btruff[ae]\b", r"\bscams?\b", r"\barnaques?\b", r"\bbetrug\b", r"\bestafas?\b", r"\bfraudes?\b",
+    # whatsapp
+    r"whats\s*app", r"\bwa\.me\b",
+    # scrivere / contattare prima (o in privato)
+    r"\b(scriv|contatt)\w*\s+(\w+\s+){0,3}(prima|in\s+privato)\b", r"\bprima\s+di\s+(acquist|compr)",
+    r"\b(contact|write|message|text|dm)\s+me\s+(first|before|privately)\b",
+    r"\b(écri|ecri|contact)\w*[\s-]+moi\s+(avant|en\s+priv)", r"\b(schreib|kontaktier)\w*\s+mir\s+(vorher|zuerst|privat)",
+    r"\b(escr[ií]b|contact|habl)\w*me\s+(antes|por\s+privado)",
+]
+# COMPLETO: in più, segnali di pagamento o contatto fuori piattaforma (Vinted ed eBay)
+ANTI_TRUFFA_COMPLETO = ANTI_TRUFFA_BASE + [
+    r"\bpay\s*pal\b", r"\beneba\b", r"\brevolut\b", r"\bpostepay\b", r"\bsatispay\b", r"\bricarica\b",
+    r"\bamici\s+e\s+parenti\b", r"\bfriends\s*(and|&)\s*family\b", r"\btelegram\b",
+    r"\bno\s+payment\s+(through|via|on)\b", r"\b(non|no)\s+(uso|utilizzo|accetto|passo\s+(da|per))\s+(il\s+)?(sistema|pagamento)",
+    r"\bfuori\s+(da\s+)?(vinted|ebay|piattaforma)", r"\bsenza\s+(passare\s+(da|per)\s+)?(vinted|ebay)",
+    r"\b(not|no)\s+(through|via)\s+(vinted|ebay|the\s+(system|platform))", r"\bhors\s+(de\s+)?vinted",
+    r"\bohne\s+vinted", r"\bfuera\s+de\s+vinted",
+    r"\b(vendita|ordine|acquisto)\s+((verr|sar)[àa]\s+)?annullat",
+]
+# Numeri di cellulare (solo Vinted): "+39 331 2682313", "3312682313", "331_2682313"
+TELEFONO = [r"(\+|\b00)\s*\d{2}[\s.\-_]?\d{3}[\s.\-_]?\d{3}[\s.\-_]?\d{3,4}\b",
+            r"\b3\d{2}[\s.\-_]?\d{3}[\s.\-_]?\d{3,4}\b"]
+
 RICERCHE = [
     {
         "nome": "MacBook Pro 16",
@@ -132,7 +169,11 @@ RICERCHE = [
         # Su Vinted cerca solo nella categoria "Console" (niente controller,
         # accessori o annunci-truffa che vendono "la foto" della console)
         "vinted_categoria": 3025,
-        "min": 50, "max": 500,
+        "min": 100, "max": 500,
+        # filtri anti-truffa su titolo + descrizione, diversi per fonte
+        "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + TELEFONO,
+                        "eBay": ANTI_TRUFFA_COMPLETO,
+                        "Subito": ANTI_TRUFFA_BASE},
         "richiedi": [r"(\bps\s*5|play\s*station\s*5)", r"(\bpro\b|ps\s*5\s*pro\b)"],   # anche "PS5Pro"
         "almeno_una": [],
         "escludi": [
@@ -450,7 +491,7 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
     """Controlli sulla descrizione (solo quando servono, per non appesantire)."""
     if not ((motivo == MODELLO_NON_INDICATO and ric.get("cerca_in_descrizione"))
             or motivo == SOPRA_SOGLIA
-            or (motivo is None and ric.get("regole_descrizione"))):
+            or (motivo is None and (ric.get("regole_descrizione") or ric.get("anti_truffa", {}).get(fonte)))):
         return motivo
     try:
         if "descrizione" not in it:
@@ -472,6 +513,15 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
                 motivo = f"descrizione cita '{m.group(0)}'"
                 log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
                 break
+        # filtri anti-truffa (titolo + descrizione)
+        if motivo is None:
+            testo = f"{it.get('title', '')}\n{desc}"
+            for rx in ric.get("anti_truffa", {}).get(fonte, []):
+                m = re.search(rx, testo, re.I)
+                if m:
+                    motivo = f"possibile truffa: '{m.group(0).strip()}'"
+                    log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
+                    break
     except Exception as e:
         log(f"Impossibile leggere la descrizione di {it['url']}: {e}")
     return motivo
