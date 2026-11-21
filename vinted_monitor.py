@@ -67,7 +67,8 @@ MACBOOK_ALTRE_MISURE = [
 # BASE: segnali quasi sempre di truffa/fuffa, usati su tutte le fonti (anche Subito).
 ANTI_TRUFFA_BASE = [
     # vende solo la foto
-    r"\bsol[oa]\s+(la\s+)?fot[oa]\b", r"\bfoto\s+stampata", r"\b(only|just)\s+(the\s+)?(photo|picture|image)\b",
+    r"\bsol[oa]\s+(la\s+)?fot[oa]\b", r"\b(foto|immagine|stampa)\s+stampat[ao]", r"\bprinted\s+(photo|picture|image)", r"\b(photo|image)\s+imprim[ée]e",
+    r"\bgedruckte[sn]?\s+(foto|bild)", r"\b(foto|imagen)\s+impres[ao]", r"\b(foto|imagem)\s+impress[ao]", r"\b(only|just)\s+(the\s+)?(photo|picture|image)\b",
     r"\b(photo|picture)\s+only\b", r"\bnur\s+(das\s+)?(foto|bild)\b", r"\b(seulement|uniquement)\s+(la\s+)?photo\b",
     r"\bsolo\s+(la\s+)?imagen\b", r"\bapenas\s+(a\s+)?foto\b", r"\bnon\s+(verr[àa]|viene|sar[àa])\s+spedit[ao]",
     # bonifico
@@ -106,6 +107,13 @@ CONCORSI = [
     r"\bgewinnspiel", r"\bverlosung", r"\bzu\s+gewinnen\b", r"\bfolg(t|e)\s+(mir|uns)\b",
     r"\bsorteo\b", r"\bconcurso\b", r"\bsorteio\b", r"\bpassatempo\b", r"\bs[ií]gue(me|nos)\b",
 ]
+
+# Lingue "normali" per un annuncio sui siti europei (codici di Google Translate).
+# Una descrizione lunga in un'altra lingua (es. afar, somalo) è un trucco tipico delle truffe:
+# l'avviso "vendo solo la foto" scritto in modo che quasi nessuno lo capisca.
+LINGUE_OK = {"it", "en", "fr", "de", "es", "pt", "nl", "pl", "cs", "sk", "lt", "lv", "et", "fi", "sv",
+             "da", "no", "hu", "ro", "el", "hr", "sl", "bg", "ga", "lb", "mt", "ca", "gl", "eu", "uk", "ru"}
+MIN_PAROLE_LINGUA = 5   # sotto questa lunghezza il rilevamento della lingua non è affidabile
 
 RICERCHE = [
     {
@@ -179,6 +187,9 @@ RICERCHE = [
         "vinted_categoria": 3025,
         "min": 100, "max": 500,
         # filtri anti-truffa su titolo + descrizione, diversi per fonte
+        # traduce la descrizione in italiano e applica i filtri anche alla traduzione;
+        # scarta le descrizioni scritte in lingue insolite (vedi LINGUE_OK)
+        "traduci_descrizione": True,
         "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + CONCORSI,
                         "eBay": ANTI_TRUFFA_COMPLETO,
                         "Subito": ANTI_TRUFFA_BASE},
@@ -361,6 +372,26 @@ def cerca_subito(sessione, ric: dict) -> list:
     return items
 
 
+def traduci(testo: str) -> tuple:
+    """Traduce in italiano con Google Translate (servizio gratuito non ufficiale).
+    Ritorna (traduzione, lingua rilevata). Se non riesce ritorna ("", None)."""
+    testo = (testo or "").strip()[:1500]
+    if not testo:
+        return "", None
+    try:
+        r = requests.get("https://translate.googleapis.com/translate_a/single",
+                         params={"client": "gtx", "sl": "auto", "tl": "it", "dt": "t", "q": testo},
+                         timeout=15)
+        r.raise_for_status()
+        dati = r.json()
+        traduzione = "".join(parte[0] for parte in (dati[0] or []) if parte and parte[0])
+        lingua = dati[2] if len(dati) > 2 and isinstance(dati[2], str) else None
+        return traduzione, lingua
+    except Exception as e:
+        log(f"Traduzione non riuscita: {e}")
+        return "", None
+
+
 def _testo(frammento_html: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", frammento_html)).strip()
 
@@ -522,9 +553,15 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
                 log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
                 break
         # filtri anti-truffa (titolo + descrizione)
-        if motivo is None:
+        if motivo is None and ric.get("anti_truffa", {}).get(fonte):
             testo = f"{it.get('title', '')}\n{desc}"
-            for rx in ric.get("anti_truffa", {}).get(fonte, []):
+            if ric.get("traduci_descrizione") and desc.strip():
+                traduzione, lingua = traduci(desc)
+                testo += "\n" + traduzione
+                if lingua and lingua.lower() not in LINGUE_OK and len(desc.split()) >= MIN_PAROLE_LINGUA:
+                    motivo = f"possibile truffa: descrizione in lingua insolita ({lingua})"
+                    log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
+            for rx in ric.get("anti_truffa", {}).get(fonte, []) if motivo is None else []:
                 m = re.search(rx, testo, re.I)
                 if m:
                     motivo = f"possibile truffa: '{m.group(0).strip()}'"
@@ -648,6 +685,8 @@ def controllo(v: Vinted, seen: list, test: bool, prezzi: dict) -> None:
         # Gli avvii automatici da cron-job.org passano riepilogo=false e restano silenziosi.
         if (os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
                 and os.getenv("RIEPILOGO", "true").lower() != "false"):
+            trad, lingua = traduci("Bonjour, je vends ma console")
+            testo += "\nTraduzione automatica: " + (f"ok ({lingua} → it)" if trad else "non disponibile")
             notifica("✅ Monitor attivo", f"Controllo manuale completato.\n{testo}",
                      "https://github.com/" + os.getenv("GITHUB_REPOSITORY", "") + "/actions")
 
