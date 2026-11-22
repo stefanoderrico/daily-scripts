@@ -46,7 +46,7 @@ EBAY_PAESI_OK = {"IT", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI
 ESCLUDI_SEMPRE = [r"\bcerco\b", r"\bcompro\b"]
 
 # Le ricerche. Per ognuna:
-#   cerca     -> testo cercato su Vinted e Subito
+#   cerca     -> testo (o lista di testi) cercato su Vinted; cerca_subito su Subito ed eBay
 #   min/max   -> prezzo in euro
 #   richiedi  -> il titolo deve contenere TUTTE queste regex
 #   almeno_una-> il titolo deve contenere ALMENO UNA di queste (lista vuota = nessun vincolo)
@@ -188,8 +188,10 @@ RICERCHE = [
     },
     {
         "nome": "PS5 Pro",
-        "cerca": "ps5 pro",
-        "cerca_subito": "ps5 pro",
+        # più testi = più ricerche con gli stessi filtri: "ps5 pro" non trova i titoli
+        # scritti per esteso ("Playstation 5 Pro") e viceversa
+        "cerca": ["ps5 pro", "playstation 5 pro"],
+        "cerca_subito": ["ps5 pro", "playstation 5 pro"],
         "subito_url": SUBITO_URL_CONSOLE,
         # Su Vinted cerca solo nella categoria "Console" (niente controller,
         # accessori o annunci-truffa che vendono "la foto" della console)
@@ -659,16 +661,48 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
     return nuovi
 
 
+def cerca_tutti(ric: dict, chiave: str, funzione, fonte: str = "", seen=None, visti=None) -> list:
+    """Esegue la ricerca per ogni testo in ric[chiave] (stringa o lista) e unisce i
+    risultati senza doppioni. Filtri, prezzi e categoria restano quelli della ricerca.
+    Un testo aggiunto dopo il primo avvio della ricerca viene "inizializzato" come al
+    solito: la prima volta i suoi annunci già online vengono memorizzati senza notifiche."""
+    testi = ric[chiave] if isinstance(ric[chiave], list) else [ric[chiave]]
+    items, ids = [], set()
+    for i, testo in enumerate(testi):
+        if i:
+            time.sleep(random.uniform(1, 3))
+        trovati = funzione({**ric, chiave: testo})
+        marker = f"#init:{ric['nome']}:{fonte}:{testo}"
+        if i and seen is not None and marker not in visti:
+            # prima volta per questo testo: segna come già visti gli annunci attuali
+            # (solo se la ricerca era già attiva; altrimenti ci pensa esamina())
+            if f"#init:{ric['nome']}:{fonte}" in visti:
+                log(f"Primo avvio del testo '{testo}' per '{ric['nome']}' su {fonte}: "
+                    f"memorizzo {len(trovati)} annunci senza notificarli.")
+                for it in trovati:
+                    if it["id"] not in visti and it["id"] not in ids:
+                        seen.append(it["id"])
+                        visti.add(it["id"])
+            seen.append(marker)
+            visti.add(marker)
+        for it in trovati:
+            if it["id"] not in ids:
+                ids.add(it["id"])
+                items.append(it)
+    return items
+
+
 def controllo(v: Vinted, seen: list, test: bool, prezzi: dict) -> None:
     visti = set(seen)
     riepilogo = []
     errori_vinted = 0
     ebay = EbayAPI(v.s)
+    stato = (None, None) if test else (seen, visti)   # in modalità test non memorizza nulla
 
     for ric in RICERCHE:
         # Vinted
         try:
-            items = v.search(ric)
+            items = cerca_tutti(ric, "cerca", v.search, "Vinted", *stato)
             if not items:
                 raise RuntimeError("nessun annuncio ricevuto (possibile blocco)")
             n = esamina(ric, "Vinted", items, seen, visti, test, v.descrizione, prezzi)
@@ -682,7 +716,7 @@ def controllo(v: Vinted, seen: list, test: bool, prezzi: dict) -> None:
         # Subito: se fallisce lo segnala, ma non fa fallire l'esecuzione
         if CERCA_SU_SUBITO:
             try:
-                items_s = cerca_subito(v.s, ric)
+                items_s = cerca_tutti(ric, "cerca_subito", lambda r: cerca_subito(v.s, r), "Subito", *stato)
                 n = esamina(ric, "Subito", items_s, seen, visti, test, prezzi=prezzi)
                 riepilogo.append(f"{ric['nome']} – Subito: {len(items_s)} letti, {n} segnalati")
             except Exception as e:
@@ -691,7 +725,7 @@ def controllo(v: Vinted, seen: list, test: bool, prezzi: dict) -> None:
         # eBay (API ufficiale): se fallisce lo segnala, ma non fa fallire l'esecuzione
         if CERCA_SU_EBAY and EbayAPI.configurata():
             try:
-                items_e = ebay.cerca(ric)
+                items_e = cerca_tutti(ric, "cerca_subito", ebay.cerca, "eBay", *stato)
                 per_url = {it["url"]: it for it in items_e}
                 n = esamina(ric, "eBay", items_e, seen, visti, test,
                             lambda url: ebay.descrizione(per_url[url]), prezzi)
