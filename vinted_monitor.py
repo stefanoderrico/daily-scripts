@@ -92,6 +92,12 @@ ANTI_TRUFFA_BASE = [
     r"\b(écri|ecri|contact)\w*[\s-]+moi\s+(avant|en\s+priv)", r"\b(schreib|kontaktier)\w*\s+mir\s+(vorher|zuerst|privat)",
     r"\b(escr[ií]b|contact|habl)\w*me\s+(antes|por\s+privado)",
 ]
+# Solo DESCRIZIONE (e sua traduzione), tutte le fonti: "vendo + foto" a distanza di al massimo
+# una parola ("vend photo de ps5", "vendo la foto", "je vends une photo", "selling a picture",
+# "verkaufe das Bild"). "vendo la console, foto reali" non scatta: la virgola spezza la frase.
+ANTI_TRUFFA_DESCRIZIONE = [
+    r"\b(vend|verkauf|sell)\w*\s+(\w+\s+)?(photos?|fotos?|pictures?|images?|imagens?|imagen(es)?|bild(er)?|immagin[ei])\b",
+]
 # COMPLETO: in più, segnali di pagamento o contatto fuori piattaforma (Vinted ed eBay)
 ANTI_TRUFFA_COMPLETO = ANTI_TRUFFA_BASE + [
     r"\bpay\s*pal\b", r"\beneba\b", r"\brevolut\b", r"\bpostepay\b", r"\bsatispay\b", r"\bricarica\b",
@@ -573,6 +579,7 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
         # filtri anti-truffa (titolo + descrizione)
         if motivo is None and ric.get("anti_truffa", {}).get(fonte):
             testo = f"{it.get('title', '')}\n{desc}"
+            testo_desc = desc   # solo descrizione (+ traduzione), per ANTI_TRUFFA_DESCRIZIONE
             limiti = ric.get("limiti_descrizione", {}).get(fonte)
             if limiti:
                 n_hashtag = len(re.findall(r"#\w+", desc))
@@ -585,11 +592,18 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
             if motivo is None and ric.get("traduci_descrizione") and desc.strip():
                 traduzione, lingua = traduci(desc)
                 testo += "\n" + traduzione
+                testo_desc += "\n" + traduzione
                 if lingua and lingua.lower() not in LINGUE_OK and len(desc.split()) >= MIN_PAROLE_LINGUA:
                     motivo = f"possibile truffa: descrizione in lingua insolita ({lingua})"
                     log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
             for rx in ric.get("anti_truffa", {}).get(fonte, []) if motivo is None else []:
                 m = re.search(rx, testo, re.I)
+                if m:
+                    motivo = f"possibile truffa: '{m.group(0).strip()}'"
+                    log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
+                    break
+            for rx in ANTI_TRUFFA_DESCRIZIONE if motivo is None else []:
+                m = re.search(rx, testo_desc, re.I)
                 if m:
                     motivo = f"possibile truffa: '{m.group(0).strip()}'"
                     log(f"Scartato {ric['nome']} ({fonte}): {it.get('title')} – {motivo} – {it['url']}")
