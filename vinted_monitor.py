@@ -594,6 +594,18 @@ def modello_in_descrizione(testo: str, ric: dict) -> bool:
     return any(re.search(rx, testo or "", re.I) for rx in ric.get("in_descrizione", ric["almeno_una"]))
 
 
+# Fonti con una chat Telegram tutta loro (tutte le ricerche insieme), al posto della chat del prodotto
+CHAT_PER_FONTE = {"Subito": "TELEGRAM_CHAT_ID_SUBITO"}
+
+
+def chat_di(ric: dict, fonte: str) -> str:
+    """Nome della variabile con la chat Telegram dove mandare l'annuncio."""
+    env = CHAT_PER_FONTE.get(fonte)
+    if env and os.getenv(env):
+        return env
+    return ric.get("chat_telegram", "TELEGRAM_CHAT_ID")
+
+
 def notifica(titolo: str, testo: str, url: str, chat_env: str = "TELEGRAM_CHAT_ID") -> None:
     if sys.platform == "darwin":
         if shutil.which("terminal-notifier"):  # notifica cliccabile che apre l'annuncio
@@ -729,7 +741,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
             if motivo is None:
                 nuovi += 1
                 notifica(f"📉 {ric['nome']}: da {prima:.0f} a {p:.0f} € ({fonte}{dove})",
-                         it.get("title", ""), url, ric.get("chat_telegram", "TELEGRAM_CHAT_ID"))
+                         it.get("title", ""), url, chat_di(ric, fonte))
             continue
 
         seen.append(iid)
@@ -741,7 +753,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
             nuovi += 1
             log(f"NUOVO {ric['nome']} ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
             notifica(f"{ric['nome']} a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url,
-                     ric.get("chat_telegram", "TELEGRAM_CHAT_ID"))
+                     chat_di(ric, fonte))
     return nuovi
 
 
