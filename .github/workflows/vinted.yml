@@ -38,6 +38,7 @@ jobs:
           TELEGRAM_CHAT_ID_PS5: ${{ secrets.TELEGRAM_CHAT_ID_PS5 }}
           TELEGRAM_CHAT_ID_MAC: ${{ secrets.TELEGRAM_CHAT_ID_MAC }}
           TELEGRAM_CHAT_ID_ALTRO: ${{ secrets.TELEGRAM_CHAT_ID_ALTRO }}
+          TELEGRAM_CHAT_ID_SUBITO: ${{ secrets.TELEGRAM_CHAT_ID_SUBITO }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           RIEPILOGO: ${{ inputs.riepilogo }}
