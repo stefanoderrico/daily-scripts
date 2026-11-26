@@ -133,6 +133,7 @@ MIN_PAROLE_LINGUA = 5   # sotto questa lunghezza il rilevamento della lingua non
 RICERCHE = [
     {
         "nome": "MacBook Pro 16",
+        "chat_telegram": "TELEGRAM_CHAT_ID_MAC",   # gruppo Telegram "Monitor MacBook Pro 16"
         "cerca": 'macbook pro 16"',
         "cerca_subito": "macbook pro 16",
         "min": 250, "max": 1750,
@@ -168,6 +169,7 @@ RICERCHE = [
     },
     {
         "nome": "iPad Pro 11 M4/M5",
+        "chat_telegram": "TELEGRAM_CHAT_ID_ALTRO",   # gruppo Telegram "Monitor iPad e altro"
         "cerca": "ipad pro",
         "cerca_subito": "ipad pro",
         "min": 150, "max": 500,
@@ -194,6 +196,7 @@ RICERCHE = [
     },
     {
         "nome": "PS5 Pro",
+        "chat_telegram": "TELEGRAM_CHAT_ID_PS5",   # gruppo Telegram "Monitor PS5 Pro"
         # più testi = più ricerche con gli stessi filtri: "ps5 pro" non trova i titoli
         # scritti per esteso ("Playstation 5 Pro") e viceversa
         "cerca": ["ps5 pro", "playstation 5 pro"],
@@ -532,7 +535,7 @@ def modello_in_descrizione(testo: str, ric: dict) -> bool:
     return any(re.search(rx, testo or "", re.I) for rx in ric.get("in_descrizione", ric["almeno_una"]))
 
 
-def notifica(titolo: str, testo: str, url: str) -> None:
+def notifica(titolo: str, testo: str, url: str, chat_env: str = "TELEGRAM_CHAT_ID") -> None:
     if sys.platform == "darwin":
         if shutil.which("terminal-notifier"):  # notifica cliccabile che apre l'annuncio
             subprocess.run(["terminal-notifier", "-title", titolo, "-message", testo,
@@ -543,7 +546,9 @@ def notifica(titolo: str, testo: str, url: str) -> None:
                             f'display notification "{safe(testo)}" with title "{safe(titolo)}" sound name "Glass"'],
                            check=False)
 
-    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    # ogni ricerca può avere la sua chat (es. TELEGRAM_CHAT_ID_PS5); se non è impostata usa quella principale
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat = os.getenv(chat_env) or os.getenv("TELEGRAM_CHAT_ID")
     if token and chat:
         try:
             requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
@@ -663,7 +668,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
             if motivo is None:
                 nuovi += 1
                 notifica(f"📉 {ric['nome']}: da {prima:.0f} a {p:.0f} € ({fonte}{dove})",
-                         it.get("title", ""), url)
+                         it.get("title", ""), url, ric.get("chat_telegram", "TELEGRAM_CHAT_ID"))
             continue
 
         seen.append(iid)
@@ -674,7 +679,8 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
         if motivo is None and not silenzioso:
             nuovi += 1
             log(f"NUOVO {ric['nome']} ({fonte}): {p:.0f} € – {it.get('title')} – {url}")
-            notifica(f"{ric['nome']} a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url)
+            notifica(f"{ric['nome']} a {p:.0f} € ({fonte}{dove})", it.get("title", ""), url,
+                     ric.get("chat_telegram", "TELEGRAM_CHAT_ID"))
     return nuovi
 
 
