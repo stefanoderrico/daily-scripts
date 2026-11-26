@@ -254,7 +254,7 @@ RICERCHE = [
         # accessori o annunci-truffa che vendono "la foto" della console)
         "vinted_categoria": 3025,
         "min": 100, "max": 500,
-        "min_fonte": {"Vinted": 250},   # su Vinted sotto i 250 € sono quasi tutte truffe
+        "min_fonte": {"Vinted": 275},   # su Vinted sotto i 275 € sono quasi tutte truffe
         "normalizza_testo": True,       # vedi normalizza()
         "escludi_titolo_fonte": {"Vinted": ESCLUDI_TITOLO_PS5_VINTED},
         # filtri anti-truffa su titolo + descrizione, diversi per fonte
