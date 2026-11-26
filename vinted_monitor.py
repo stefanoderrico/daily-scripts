@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 from curl_cffi import requests
@@ -123,6 +124,53 @@ CONCORSI = [
     r"\bsorteo\b", r"\bconcurso\b", r"\bsorteio\b", r"\bpassatempo\b", r"\bs[ií]gue(me|nos)\b",
 ]
 
+# Solo PS5 Pro su Vinted: altri segnali di annunci che vendono la foto, pagamenti fuori piattaforma
+# e concorsi. Le forme italiane valgono anche sulla traduzione automatica della descrizione.
+ANTI_TRUFFA_PS5_VINTED = [
+    # "vendo una fotografia/photographie di PS5"
+    r"\b(vend|verkauf|sell)\w*\s+(\w+\s+){0,2}(fotografi[ae]|photographies?|photographs?)\b",
+    # "è una foto", "c'est une photo", "it's a picture" (ma non "è una foto reale/della console")
+    r"(\b[èe]|\bc'?est|\bit'?s|\bthis\s+is)\s+(solo\s+|seulement\s+|only\s+|just\s+)?(una?\s+|une\s+|a\s+)?"
+    r"(foto|photo|immagine|image|picture|fotografia|photographie)s?\b"
+    r"(?!\s*(real|reale|reali|r[ée]elle|vera|vere|originale|del\s+prodotto|della\s+console|of\s+the|du\s+produit|de\s+la\s+console))",
+    # da stampare
+    r"\bda\s+stampare\b", r"\bstampabil[ei]\b", r"\b[àa]\s+imprimer\b", r"\bto\s+print\b", r"\bprintable\b",
+    r"\bzum\s+(aus)?drucken\b", r"\bpara\s+imprimir\b",
+    # "l'unica cosa venduta è la foto", "seul la chose vendu est la photo", "et non la console"
+    r"\bunica\s+cosa\s+vendut[ao]\b", r"\bseul(e)?\s+(la\s+)?chose\s+vendu", r"\bonly\s+thing\s+(being\s+)?sold\b",
+    r"\b(e|et|and)\s+non?t?\s+(pas\s+)?(la|the)\s+console\b",
+    # pagamento in banca
+    r"\btrasferimento\s+bancario\b", r"\b(per|par|via|by|[üu]ber|tramite)\s+(bank|banca|banque|banco)\b",
+    # concorsi
+    r"\bgagn[ée]\b", r"\bfait\s+gagner\b", r"\blik(er|ez|e)\s+(mes|my|les|tous)\s+(\w+\s+)?(posts?|publications?|annonces?|articles?)\b",
+    r"\bpartecip(a|ate|are)\b",
+]
+# Solo PS5 Pro su Vinted, sul TITOLO: inizia con "foto/photo/image..." oppure parla di foglio, poster, stampa
+ESCLUDI_TITOLO_PS5_VINTED = [
+    r"^\W*(foto|photo|image|picture|bild|imagen|imagem|fotografia|photographie)s?\b",
+    r"\b(foglio|carta|poster|stampa|papier|paper|print|printed|affiche)\b",
+]
+
+# Lettere "camuffate": cirilliche e greche identiche a quelle latine ("PаyPаl" con la "а" cirillica)
+OMOGRAFI = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ј": "j", "ѕ": "s",
+    "ԁ": "d", "һ": "h", "ӏ": "l", "ԛ": "q", "ԝ": "w", "ɡ": "g",
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T",
+    "Х": "X", "У": "Y", "І": "I", "Ј": "J", "Ѕ": "S",
+    "α": "a", "ο": "o", "ν": "v", "ρ": "p", "τ": "t", "ι": "i", "κ": "k", "υ": "u",
+    "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O",
+    "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+})
+
+
+def normalizza(testo: str) -> str:
+    """Toglie i trucchi per aggirare i filtri: lettere stilizzate (𝐏𝐚𝐲𝐏𝐚𝐥), caratteri invisibili
+    e lettere cirilliche/greche dentro parole latine. Le parole tutte in cirillico restano com'erano."""
+    testo = unicodedata.normalize("NFKC", testo or "")
+    testo = re.sub(r"[­​-‏⁠﻿]", "", testo)
+    return re.sub(r"\w+", lambda m: m.group(0).translate(OMOGRAFI)
+                  if re.search(r"[A-Za-z]", m.group(0)) else m.group(0), testo)
+
 # Lingue "normali" per un annuncio sui siti europei (codici di Google Translate).
 # Una descrizione lunga in un'altra lingua (es. afar, somalo) è un trucco tipico delle truffe:
 # l'avviso "vendo solo la foto" scritto in modo che quasi nessuno lo capisca.
@@ -206,13 +254,16 @@ RICERCHE = [
         # accessori o annunci-truffa che vendono "la foto" della console)
         "vinted_categoria": 3025,
         "min": 100, "max": 500,
+        "min_fonte": {"Vinted": 250},   # su Vinted sotto i 250 € sono quasi tutte truffe
+        "normalizza_testo": True,       # vedi normalizza()
+        "escludi_titolo_fonte": {"Vinted": ESCLUDI_TITOLO_PS5_VINTED},
         # filtri anti-truffa su titolo + descrizione, diversi per fonte
         # traduce la descrizione in italiano e applica i filtri anche alla traduzione;
         # scarta le descrizioni scritte in lingue insolite (vedi LINGUE_OK)
         "traduci_descrizione": True,
         # descrizioni piene di hashtag o lunghissime: tipiche degli annunci-truffa (solo Vinted)
         "limiti_descrizione": {"Vinted": {"hashtag": 15, "caratteri": 2000}},
-        "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + CONCORSI,
+        "anti_truffa": {"Vinted": ANTI_TRUFFA_COMPLETO + CONCORSI + ANTI_TRUFFA_PS5_VINTED,
                         "eBay": ANTI_TRUFFA_COMPLETO,
                         "Subito": ANTI_TRUFFA_BASE},
         "richiedi": [r"(\bps\s*5|play\s*station\s*5)", r"(\bpro\b|ps\s*5\s*pro\b)"],   # anche "PS5Pro"
@@ -307,7 +358,7 @@ class Vinted:
         params = {
             "search_text": ric["cerca"],
             "order": "newest_first",
-            "price_from": ric["min"],
+            "price_from": minimo(ric, "Vinted"),
             "price_to": ric["max"],
         }
         if ric.get("vinted_categoria"):
@@ -503,18 +554,25 @@ def prezzo(item: dict) -> float:
         return 0.0
 
 
-def motivo_esclusione(item: dict, ric: dict):
+def minimo(ric: dict, fonte: str | None) -> float:
+    """Prezzo minimo della ricerca, eventualmente diverso per fonte (es. PS5 Pro su Vinted)."""
+    return ric.get("min_fonte", {}).get(fonte, ric["min"])
+
+
+def motivo_esclusione(item: dict, ric: dict, fonte: str | None = None):
     """Ritorna il motivo per cui l'annuncio è scartato, oppure None se passa."""
     titolo = (item.get("title") or "").lower()
+    if ric.get("normalizza_testo"):
+        titolo = normalizza(titolo)
     for rx in ric["richiedi"]:
         if not re.search(rx, titolo, re.I):
             return f"manca '{rx}'"
-    for rx in ric["escludi"] + ESCLUDI_SEMPRE:
+    for rx in ric["escludi"] + ESCLUDI_SEMPRE + ric.get("escludi_titolo_fonte", {}).get(fonte, []):
         m = re.search(rx, titolo, re.I)
         if m:
             return f"contiene '{m.group(0)}'"
     p = prezzo(item)
-    if not (ric["min"] <= p <= ric["max"]):
+    if not (minimo(ric, fonte) <= p <= ric["max"]):
         return f"prezzo {p:.0f} € fuori range"
     if ric["almeno_una"] and not any(re.search(rx, titolo, re.I) for rx in ric["almeno_una"]):
         return MODELLO_NON_INDICATO
@@ -587,7 +645,9 @@ def controlli_descrizione(it: dict, ric: dict, fonte: str, motivo, leggi_descriz
         # filtri anti-truffa (titolo + descrizione)
         if motivo is None and ric.get("anti_truffa", {}).get(fonte):
             testo = f"{it.get('title', '')}\n{desc}"
-            testo_desc = desc   # solo descrizione (+ traduzione), per ANTI_TRUFFA_DESCRIZIONE
+            if ric.get("normalizza_testo"):
+                testo = normalizza(testo)
+            testo_desc = normalizza(desc) if ric.get("normalizza_testo") else desc   # solo descrizione (+ traduzione), per ANTI_TRUFFA_DESCRIZIONE
             limiti = ric.get("limiti_descrizione", {}).get(fonte)
             if limiti:
                 n_hashtag = len(re.findall(r"#\w+", desc))
@@ -644,7 +704,7 @@ def esamina(ric: dict, fonte: str, items: list, seen: list, visti: set, test: bo
     nuovi = 0
     for it in items:
         iid, url, p = it["id"], it["url"], prezzo(it)
-        motivo = motivo_esclusione(it, ric)
+        motivo = motivo_esclusione(it, ric, fonte)
 
         if test:
             stato = "OK   " if motivo is None else f"NO   ({motivo})"
