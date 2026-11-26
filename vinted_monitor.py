@@ -335,9 +335,12 @@ class Vinted:
         return html.unescape(m.group(1)) if m else ""
 
 
-# Ogni annuncio nella pagina ha un link così:
-# <a href="/items/123-titolo" ... title="Titolo, Brand: Apple, Modello: ..., Condizioni: Ottime, 900.00 €, 945.70 €">
-ITEM_RE = re.compile(r'<a href="(/items/(\d+)-[^"?]*)[^"]*"[^>]*?title="([^"]*)"')
+# Ogni annuncio nella pagina ha un link così (formato da fine novembre 2026):
+# <a href="/items/123-titolo?referrer=catalog" ...><span hidden>…</span>
+#   <div ... title="Titolo, Brand: Apple, Modello: ..., Condizioni: Ottime, 900.00 €, 945.70 €">
+# Prima il title era direttamente sul link: la regex accetta entrambi i formati
+# (il primo title="..." entro lo stesso link).
+ITEM_RE = re.compile(r'<a href="(/items/(\d+)-[^"?]*)[^"]*"(?:(?!</a>).){0,3000}?title="([^"]*)"', re.S)
 PREZZI_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*€")
 
 
