@@ -270,6 +270,7 @@ RICERCHE = [
         "almeno_una": [],
         "escludi": [
             r"\bps\s*4\b", r"play\s*station\s*4",               # PS4 Pro
+            r"\bslim\b",                                          # PS5 Slim ("pro" nel nome di un controller)
             r"\bportal\b", r"\bvr\s*2?\b",                        # PlayStation Portal, PS VR2
             r"\b(solo\s+scatola|scatola\s+vuota|box\s+vuot[oa])\b",
             r"\b(per\s+(pezzi|ricambi)|non\s+funzionante|guast[oa]|rott[oa]|difettos[oa])\b",
